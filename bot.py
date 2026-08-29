@@ -598,6 +598,10 @@ async def show_admin_panel(update_or_query, context: ContextTypes.DEFAULT_TYPE):
         ],
         [
             InlineKeyboardButton("📋 Pending Deposits", callback_data="admin_deposits"),
+            InlineKeyboardButton("📜 All Deposits History", callback_data="admin_all_deposits"),
+        ],
+        [
+            InlineKeyboardButton("👥 Deposited Users & Balances", callback_data="admin_deposited_users"),
             InlineKeyboardButton("🔄 Sync Products", callback_data="admin_sync"),
         ],
         [
@@ -1064,6 +1068,96 @@ async def handle_admin_deposits_callback(query, context: ContextTypes.DEFAULT_TY
     ])
     await query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(buttons))
 
+async def handle_admin_all_deposits_callback(query, context: ContextTypes.DEFAULT_TYPE, status_filter: str = None):
+    deposits = await database.get_all_deposits(limit=12, status=status_filter)
+    filter_label = status_filter.upper() if status_filter else "ALL"
+    text = f"📜 *Deposits History ({filter_label}) — Total: {len(deposits)}*\n\n"
+
+    status_emojis = {
+        "PAID": "🟢 PAID",
+        "PENDING": "⏳ PENDING",
+        "PENDING_VERIFICATION": "⏳ PENDING",
+        "INITIAL": "⚪ INITIAL",
+        "REJECTED": "🔴 REJECTED"
+    }
+
+    buttons = []
+    for d in deposits:
+        t_no = d['merchant_trade_no']
+        amt = d['amount']
+        net = d.get('network') or "CRYPTO"
+        st = d.get('status', 'INITIAL').upper()
+        st_badge = status_emojis.get(st, f"⚪ {st}")
+        u_label = f"@{d['username']}" if d.get('username') else (d.get('first_name') or f"ID {d['user_id']}")
+        tx = d.get('tx_hash') or ""
+        tx_short = f"`{tx[:8]}...{tx[-6:]}`" if len(tx) > 14 else (f"`{tx}`" if tx else "_No TxHash_")
+
+        created = str(d.get('created_at', ''))[:16].replace("T", " ")
+        text += (
+            f"👤 {u_label} (`{d['user_id']}`)\n"
+            f"💵 *${amt:.2f}* USDT ({net}) | {st_badge}\n"
+            f"🆔 `{t_no}`\n"
+            f"🔗 Tx: {tx_short} | 🕒 `{created}`\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+        )
+        if st in ("PENDING", "PENDING_VERIFICATION", "INITIAL"):
+            buttons.append([
+                InlineKeyboardButton(f"✅ Approve (${amt:.2f})", callback_data=f"dep_appr_{t_no}"),
+                InlineKeyboardButton("❌ Reject", callback_data=f"dep_rej_{t_no}")
+            ])
+
+    if not deposits:
+        text += "_No deposits found for this filter._\n\n"
+
+    buttons.append([
+        InlineKeyboardButton("🌐 All", callback_data="admin_all_deposits"),
+        InlineKeyboardButton("🟢 Paid", callback_data="admin_all_deposits_paid"),
+        InlineKeyboardButton("⏳ Pending", callback_data="admin_all_deposits_pending"),
+        InlineKeyboardButton("🔴 Rejected", callback_data="admin_all_deposits_rejected"),
+    ])
+    buttons.append([
+        InlineKeyboardButton("🔄 Refresh", callback_data="admin_all_deposits"),
+        InlineKeyboardButton("🔙 Admin Panel", callback_data="nav_admin")
+    ])
+    await query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(buttons))
+
+async def handle_admin_deposited_users_callback(query, context: ContextTypes.DEFAULT_TYPE):
+    users = await database.get_deposited_users_summary()
+    total_volume = sum(u.get('total_deposited_paid', 0.0) for u in users)
+    text = (
+        f"👥 *Deposited Users & Balances Summary*\n\n"
+        f"👤 *Total Depositing Users:* `{len(users)}`\n"
+        f"💰 *Total Deposited Volume (Paid):* `${total_volume:.2f}` USD\n\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+    )
+
+    buttons = []
+    for u in users[:15]:
+        u_id = u['user_id']
+        u_name = f"@{u['username']}" if u.get('username') else (u.get('first_name') or f"User {u_id}")
+        paid_sum = float(u.get('total_deposited_paid', 0.0))
+        curr_bal = float(u.get('live_balance', 0.0))
+        dep_count = u.get('total_deposits_count', 0)
+
+        text += (
+            f"👤 *{u_name}* (`{u_id}`)\n"
+            f"💵 Total Paid: `${paid_sum:.2f}` ({dep_count} deposits)\n"
+            f"💳 Current Balance: *${curr_bal:.2f}* USD\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+        )
+        buttons.append([
+            InlineKeyboardButton(f"⚙️ Manage {u_name} (${curr_bal:.2f})", callback_data=f"admin_usr_{u_id}")
+        ])
+
+    if not users:
+        text += "_No user has deposited yet._"
+
+    buttons.append([
+        InlineKeyboardButton("🔄 Refresh", callback_data="admin_deposited_users"),
+        InlineKeyboardButton("🔙 Admin Panel", callback_data="nav_admin")
+    ])
+    await query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(buttons))
+
 async def handle_admin_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -1076,6 +1170,18 @@ async def handle_admin_router(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     if data == "admin_panel":
         await show_admin_panel(query, context)
+    elif data == "admin_deposits":
+        await handle_admin_deposits_callback(query, context)
+    elif data == "admin_all_deposits":
+        await handle_admin_all_deposits_callback(query, context)
+    elif data == "admin_all_deposits_paid":
+        await handle_admin_all_deposits_callback(query, context, status_filter="PAID")
+    elif data == "admin_all_deposits_pending":
+        await handle_admin_all_deposits_callback(query, context, status_filter="PENDING_VERIFICATION")
+    elif data == "admin_all_deposits_rejected":
+        await handle_admin_all_deposits_callback(query, context, status_filter="REJECTED")
+    elif data == "admin_deposited_users":
+        await handle_admin_deposited_users_callback(query, context)
     elif data == "admin_balance":
         await handle_admin_balance_callback(query, context)
     elif data == "admin_stats":
@@ -1664,6 +1770,32 @@ async def handle_user_text_input(update: Update, context: ContextTypes.DEFAULT_T
         trade_no = context.user_data.pop("waiting_for_txhash_input")
         network = context.user_data.pop("txhash_network", "BEP20")
         tx_hash = text.strip()
+
+        # 1. Anti-Fake Protection: Format validation
+        if len(tx_hash) < 15 or " " in tx_hash:
+            await update.message.reply_text(
+                "❌ *Invalid Transaction Hash Format!*\n\n"
+                "Please enter a valid blockchain TxHash (e.g. `0x123abc...` or `a1b2c3...`).\n"
+                "Fake or invalid texts are not accepted.",
+                parse_mode=ParseMode.MARKDOWN,
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("💳 Back to Deposit", callback_data="nav_deposit")]])
+            )
+            return
+
+        # 2. Anti-Fake Protection: Duplicate / Replay attack prevention
+        is_duplicate = await database.is_txhash_used(tx_hash, current_trade_no=trade_no)
+        if is_duplicate:
+            await update.message.reply_text(
+                "🚫 *Duplicate / Reused TxHash Detected!*\n\n"
+                "This Transaction Hash has already been used or approved for another deposit.\n"
+                "Duplicate or fake submissions are strictly rejected.",
+                parse_mode=ParseMode.MARKDOWN,
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("💳 New Deposit", callback_data="nav_deposit")],
+                    [InlineKeyboardButton("🏠 Main Menu", callback_data="nav_main")]
+                ])
+            )
+            return
 
         label = NETWORK_LABELS.get(network, network)
         await database.record_deposit_txhash(trade_no, network, tx_hash, status="PENDING_VERIFICATION")

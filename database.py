@@ -734,13 +734,147 @@ async def approve_deposit(merchant_trade_no: str) -> dict:
     rec["status"] = "PAID"
     return rec
 
-async def reject_deposit(merchant_trade_no: str) -> dict:
-    rec = await get_deposit_record(merchant_trade_no)
-    if not rec:
-        return None
-    await update_deposit_status(merchant_trade_no, "REJECTED")
-    rec["status"] = "REJECTED"
-    return rec
+async def is_txhash_used(tx_hash: str, current_trade_no: str = None) -> bool:
+    """Check if a TxHash has already been submitted or approved to prevent fake duplicate submissions."""
+    clean_tx = tx_hash.strip().lower()
+    if not clean_tx:
+        return False
+    if USE_POSTGRES:
+        try:
+            pool = await get_pg_pool()
+            async with pool.acquire() as conn:
+                if current_trade_no:
+                    count = await conn.fetchval(
+                        "SELECT COUNT(*) FROM deposits WHERE LOWER(tx_hash) = $1 AND merchant_trade_no != $2 AND status IN ('PAID', 'PENDING_VERIFICATION')",
+                        clean_tx, current_trade_no
+                    )
+                else:
+                    count = await conn.fetchval(
+                        "SELECT COUNT(*) FROM deposits WHERE LOWER(tx_hash) = $1 AND status IN ('PAID', 'PENDING_VERIFICATION')",
+                        clean_tx
+                    )
+                return bool(count and count > 0)
+        except Exception as e:
+            logger.error(f"PG is_txhash_used error: {e}")
+
+    import aiosqlite
+    async with aiosqlite.connect(DB_PATH) as db:
+        if current_trade_no:
+            async with db.execute(
+                "SELECT COUNT(*) FROM deposits WHERE LOWER(tx_hash) = LOWER(?) AND merchant_trade_no != ? AND status IN ('PAID', 'PENDING_VERIFICATION')",
+                (clean_tx, current_trade_no)
+            ) as cursor:
+                row = await cursor.fetchone()
+                return bool(row and row[0] > 0)
+        else:
+            async with db.execute(
+                "SELECT COUNT(*) FROM deposits WHERE LOWER(tx_hash) = LOWER(?) AND status IN ('PAID', 'PENDING_VERIFICATION')",
+                (clean_tx,)
+            ) as cursor:
+                row = await cursor.fetchone()
+                return bool(row and row[0] > 0)
+
+async def get_all_deposits(limit: int = 30, status: str = None) -> list[dict]:
+    """Retrieve full history of deposits with user info."""
+    if USE_POSTGRES:
+        try:
+            pool = await get_pg_pool()
+            async with pool.acquire() as conn:
+                if status:
+                    rows = await conn.fetch("""
+                        SELECT d.*, u.username, u.first_name, COALESCE(b.balance, 0.0) as current_balance
+                        FROM deposits d
+                        LEFT JOIN users u ON d.user_id = u.user_id
+                        LEFT JOIN user_balances b ON d.user_id = b.user_id
+                        WHERE d.status = $1
+                        ORDER BY d.created_at DESC
+                        LIMIT $2
+                    """, status.upper(), limit)
+                else:
+                    rows = await conn.fetch("""
+                        SELECT d.*, u.username, u.first_name, COALESCE(b.balance, 0.0) as current_balance
+                        FROM deposits d
+                        LEFT JOIN users u ON d.user_id = u.user_id
+                        LEFT JOIN user_balances b ON d.user_id = b.user_id
+                        ORDER BY d.created_at DESC
+                        LIMIT $1
+                    """, limit)
+                return [dict(r) for r in rows]
+        except Exception as e:
+            logger.error(f"PG get_all_deposits error: {e}")
+
+    import aiosqlite
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        if status:
+            async with db.execute("""
+                SELECT d.*, u.username, u.first_name, COALESCE(b.balance, 0.0) as current_balance
+                FROM deposits d
+                LEFT JOIN users u ON d.user_id = u.user_id
+                LEFT JOIN user_balances b ON d.user_id = b.user_id
+                WHERE d.status = ?
+                ORDER BY d.created_at DESC
+                LIMIT ?
+            """, (status.upper(), limit)) as cursor:
+                rows = await cursor.fetchall()
+                return [dict(r) for r in rows]
+        else:
+            async with db.execute("""
+                SELECT d.*, u.username, u.first_name, COALESCE(b.balance, 0.0) as current_balance
+                FROM deposits d
+                LEFT JOIN users u ON d.user_id = u.user_id
+                LEFT JOIN user_balances b ON d.user_id = b.user_id
+                ORDER BY d.created_at DESC
+                LIMIT ?
+            """, (limit,)) as cursor:
+                rows = await cursor.fetchall()
+                return [dict(r) for r in rows]
+
+async def get_deposited_users_summary() -> list[dict]:
+    """Get aggregated list of all users who deposited, total paid amount, and their current live balance."""
+    if USE_POSTGRES:
+        try:
+            pool = await get_pg_pool()
+            async with pool.acquire() as conn:
+                rows = await conn.fetch("""
+                    SELECT 
+                        u.user_id,
+                        u.username,
+                        u.first_name,
+                        COALESCE(b.balance, 0.0) as live_balance,
+                        COUNT(d.merchant_trade_no) as total_deposits_count,
+                        COALESCE(SUM(CASE WHEN d.status = 'PAID' THEN d.amount ELSE 0.0 END), 0.0) as total_deposited_paid,
+                        MAX(d.created_at) as last_deposit_time
+                    FROM users u
+                    JOIN deposits d ON u.user_id = d.user_id
+                    LEFT JOIN user_balances b ON u.user_id = b.user_id
+                    GROUP BY u.user_id, u.username, u.first_name, b.balance
+                    ORDER BY total_deposited_paid DESC, live_balance DESC
+                """)
+                return [dict(r) for r in rows]
+        except Exception as e:
+            logger.error(f"PG get_deposited_users_summary error: {e}")
+
+    import aiosqlite
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute("""
+            SELECT 
+                u.user_id,
+                u.username,
+                u.first_name,
+                COALESCE(b.balance, 0.0) as live_balance,
+                COUNT(d.merchant_trade_no) as total_deposits_count,
+                COALESCE(SUM(CASE WHEN d.status = 'PAID' THEN d.amount ELSE 0.0 END), 0.0) as total_deposited_paid,
+                MAX(d.created_at) as last_deposit_time
+            FROM users u
+            JOIN deposits d ON u.user_id = d.user_id
+            LEFT JOIN user_balances b ON u.user_id = b.user_id
+            GROUP BY u.user_id, u.username, u.first_name, b.balance
+            ORDER BY total_deposited_paid DESC, live_balance DESC
+        """) as cursor:
+            rows = await cursor.fetchall()
+            return [dict(r) for r in rows]
 
 async def export_full_backup() -> tuple[str, str]:
     import json
