@@ -11,11 +11,24 @@ import database
 load_dotenv()
 logger = logging.getLogger(__name__)
 
-BINANCE_BASE_URL = "https://api.binance.com"
+DEFAULT_BINANCE_ENDPOINTS = [
+    "https://api.binance.com",
+    "https://api1.binance.com",
+    "https://api2.binance.com",
+    "https://api3.binance.com",
+    "https://api4.binance.com",
+]
 
 class BinanceAPIClient:
     def __init__(self, base_url: Optional[str] = None):
-        self.base_url = (base_url or BINANCE_BASE_URL).rstrip("/")
+        if base_url:
+            self.endpoints = [base_url.rstrip("/")]
+        else:
+            custom_url = os.getenv("BINANCE_BASE_URL")
+            if custom_url:
+                self.endpoints = [custom_url.rstrip("/")] + DEFAULT_BINANCE_ENDPOINTS
+            else:
+                self.endpoints = list(DEFAULT_BINANCE_ENDPOINTS)
 
     async def get_credentials(self) -> tuple[Optional[str], Optional[str]]:
         """Fetch Binance API Key & Secret from database or .env."""
@@ -29,6 +42,13 @@ class BinanceAPIClient:
 
         return (api_key.strip() if api_key else None, api_secret.strip() if api_secret else None)
 
+    async def get_proxy(self) -> Optional[str]:
+        """Fetch Proxy URL from DB or environment."""
+        proxy = await database.get_setting("binance_proxy")
+        if not proxy:
+            proxy = os.getenv("BINANCE_PROXY_URL") or os.getenv("PROXY_URL") or os.getenv("HTTPS_PROXY") or os.getenv("HTTP_PROXY")
+        return proxy.strip() if proxy else None
+
     def _sign(self, query_string: str, secret_key: str) -> str:
         """Create HMAC-SHA256 signature for Binance API."""
         return hmac.new(
@@ -37,10 +57,10 @@ class BinanceAPIClient:
             hashlib.sha256
         ).hexdigest()
 
-    async def get_server_time_offset(self, client: httpx.AsyncClient) -> int:
+    async def get_server_time_offset(self, client: httpx.AsyncClient, base_url: str) -> int:
         """Fetch server time from Binance and calculate offset relative to local clock."""
         try:
-            r = await client.get(f"{self.base_url}/api/v3/time")
+            r = await client.get(f"{base_url}/api/v3/time")
             if r.status_code == 200:
                 server_time = r.json().get("serverTime")
                 local_time = int(time.time() * 1000)
@@ -51,7 +71,7 @@ class BinanceAPIClient:
 
     async def get_live_balances(self) -> Dict[str, Any]:
         """
-        Fetch Live Spot and Funding balances from Binance account.
+        Fetch Live Spot and Funding balances from Binance account across available endpoints.
         """
         api_key, api_secret = await self.get_credentials()
         if not api_key or not api_secret:
@@ -65,90 +85,101 @@ class BinanceAPIClient:
             "Content-Type": "application/json"
         }
 
-        spot_assets = []
-        funding_assets = []
-        total_usdt_spot = 0.0
-        total_usdt_funding = 0.0
-
-        proxy = os.getenv("BINANCE_PROXY_URL") or os.getenv("PROXY_URL") or os.getenv("HTTPS_PROXY") or os.getenv("HTTP_PROXY")
+        proxy = await self.get_proxy()
         client_kwargs = {"timeout": 12.0}
         if proxy:
             client_kwargs["proxy"] = proxy
 
-        async with httpx.AsyncClient(**client_kwargs) as client:
-            try:
-                offset = await self.get_server_time_offset(client)
-                timestamp = int(time.time() * 1000) + offset
-                query_params = f"timestamp={timestamp}&recvWindow=60000"
-                signature = self._sign(query_params, api_secret)
-                url = f"{self.base_url}/api/v3/account?{query_params}&signature={signature}"
+        last_error = "Unknown error"
 
-                # 1. Fetch Spot Wallet Balances
-                res = await client.get(url, headers=headers)
-                if res.status_code != 200:
-                    err_msg = res.json().get("msg", res.text)
+        async with httpx.AsyncClient(**client_kwargs) as client:
+            for base_url in self.endpoints:
+                try:
+                    offset = await self.get_server_time_offset(client, base_url)
+                    timestamp = int(time.time() * 1000) + offset
+                    query_params = f"timestamp={timestamp}&recvWindow=60000"
+                    signature = self._sign(query_params, api_secret)
+                    url = f"{base_url}/api/v3/account?{query_params}&signature={signature}"
+
+                    # 1. Fetch Spot Wallet Balances
+                    res = await client.get(url, headers=headers)
+                    if res.status_code == 418 or res.status_code == 429:
+                        last_error = f"Binance Rate/IP Limit on {base_url} ({res.status_code}): {res.text}"
+                        logger.warning(f"Endpoint {base_url} IP limited/banned. Trying next cluster endpoint...")
+                        continue
+
+                    if res.status_code != 200:
+                        err_msg = res.json().get("msg", res.text)
+                        return {
+                            "success": False,
+                            "error": f"Binance API Error ({res.status_code}): {err_msg}"
+                        }
+
+                    account_data = res.json()
+                    spot_assets = []
+                    funding_assets = []
+                    total_usdt_spot = 0.0
+                    total_usdt_funding = 0.0
+
+                    for b in account_data.get("balances", []):
+                        asset = b["asset"]
+                        free = float(b["free"])
+                        locked = float(b["locked"])
+                        total = free + locked
+                        if total > 0.0001:
+                            spot_assets.append({
+                                "asset": asset,
+                                "free": free,
+                                "locked": locked,
+                                "total": total
+                            })
+                            if asset.upper() in ("USDT", "BUSD", "FDUSD", "USDC"):
+                                total_usdt_spot += total
+
+                    # 2. Fetch Funding Wallet Balances
+                    try:
+                        f_timestamp = int(time.time() * 1000) + offset
+                        f_query = f"timestamp={f_timestamp}&recvWindow=60000"
+                        f_signature = self._sign(f_query, api_secret)
+                        f_url = f"{base_url}/sapi/v1/asset/get-funding-asset?{f_query}&signature={f_signature}"
+                        f_res = await client.post(f_url, headers=headers)
+                        if f_res.status_code == 200:
+                            funding_list = f_res.json()
+                            for fb in funding_list:
+                                asset = fb["asset"]
+                                free = float(fb["free"])
+                                locked = float(fb.get("locked", 0.0)) + float(fb.get("freeze", 0.0))
+                                total = free + locked
+                                if total > 0.0001:
+                                    funding_assets.append({
+                                        "asset": asset,
+                                        "free": free,
+                                        "locked": locked,
+                                        "total": total
+                                    })
+                                    if asset.upper() in ("USDT", "BUSD", "FDUSD", "USDC"):
+                                        total_usdt_funding += total
+                    except Exception as fe:
+                        logger.warning(f"Could not fetch funding assets: {fe}")
+
                     return {
-                        "success": False,
-                        "error": f"Binance API Error ({res.status_code}): {err_msg}"
+                        "success": True,
+                        "account_type": account_data.get("accountType", "SPOT"),
+                        "can_deposit": account_data.get("canDeposit", True),
+                        "can_trade": account_data.get("canTrade", True),
+                        "total_usdt_spot": total_usdt_spot,
+                        "total_usdt_funding": total_usdt_funding,
+                        "total_usdt_all": total_usdt_spot + total_usdt_funding,
+                        "spot_assets": spot_assets,
+                        "funding_assets": funding_assets
                     }
 
-                account_data = res.json()
-                for b in account_data.get("balances", []):
-                    asset = b["asset"]
-                    free = float(b["free"])
-                    locked = float(b["locked"])
-                    total = free + locked
-                    if total > 0.0001:
-                        spot_assets.append({
-                            "asset": asset,
-                            "free": free,
-                            "locked": locked,
-                            "total": total
-                        })
-                        if asset.upper() in ("USDT", "BUSD", "FDUSD", "USDC"):
-                            total_usdt_spot += total
+                except Exception as e:
+                    last_error = str(e)
+                    logger.warning(f"Error calling {base_url}: {e}")
+                    continue
 
-                # 2. Fetch Funding Wallet Balances
-                try:
-                    f_timestamp = int(time.time() * 1000) + offset
-                    f_query = f"timestamp={f_timestamp}&recvWindow=60000"
-                    f_signature = self._sign(f_query, api_secret)
-                    f_url = f"{self.base_url}/sapi/v1/asset/get-funding-asset?{f_query}&signature={f_signature}"
-                    f_res = await client.post(f_url, headers=headers)
-                    if f_res.status_code == 200:
-                        funding_list = f_res.json()
-                        for fb in funding_list:
-                            asset = fb["asset"]
-                            free = float(fb["free"])
-                            locked = float(fb.get("locked", 0.0)) + float(fb.get("freeze", 0.0))
-                            total = free + locked
-                            if total > 0.0001:
-                                funding_assets.append({
-                                    "asset": asset,
-                                    "free": free,
-                                    "locked": locked,
-                                    "total": total
-                                })
-                                if asset.upper() in ("USDT", "BUSD", "FDUSD", "USDC"):
-                                    total_usdt_funding += total
-                except Exception as fe:
-                    logger.warning(f"Could not fetch funding assets: {fe}")
-
-                return {
-                    "success": True,
-                    "account_type": account_data.get("accountType", "SPOT"),
-                    "can_deposit": account_data.get("canDeposit", True),
-                    "can_trade": account_data.get("canTrade", True),
-                    "total_usdt_spot": total_usdt_spot,
-                    "total_usdt_funding": total_usdt_funding,
-                    "total_usdt_all": total_usdt_spot + total_usdt_funding,
-                    "spot_assets": spot_assets,
-                    "funding_assets": funding_assets
-                }
-
-            except Exception as e:
-                logger.error(f"Error fetching Binance balances: {e}")
-                return {"success": False, "error": str(e)}
+        return {"success": False, "error": last_error}
 
     async def get_recent_deposits(self, coin: str = "USDT", limit: int = 10) -> List[Dict[str, Any]]:
         """Fetch recent crypto deposits history into Binance account."""
@@ -157,22 +188,27 @@ class BinanceAPIClient:
             return []
 
         headers = {"X-MBX-APIKEY": api_key}
-        proxy = os.getenv("BINANCE_PROXY_URL") or os.getenv("PROXY_URL") or os.getenv("HTTPS_PROXY") or os.getenv("HTTP_PROXY")
+        proxy = await self.get_proxy()
         client_kwargs = {"timeout": 12.0}
         if proxy:
             client_kwargs["proxy"] = proxy
 
         async with httpx.AsyncClient(**client_kwargs) as client:
-            try:
-                offset = await self.get_server_time_offset(client)
-                timestamp = int(time.time() * 1000) + offset
-                query = f"coin={coin}&status=1&limit={limit}&timestamp={timestamp}&recvWindow=60000"
-                signature = self._sign(query, api_secret)
-                url = f"{self.base_url}/sapi/v1/capital/deposit/hisrec?{query}&signature={signature}"
+            for base_url in self.endpoints:
+                try:
+                    offset = await self.get_server_time_offset(client, base_url)
+                    timestamp = int(time.time() * 1000) + offset
+                    query = f"coin={coin}&status=1&limit={limit}&timestamp={timestamp}&recvWindow=60000"
+                    signature = self._sign(query, api_secret)
+                    url = f"{base_url}/sapi/v1/capital/deposit/hisrec?{query}&signature={signature}"
 
-                res = await client.get(url, headers=headers)
-                if res.status_code == 200:
-                    return res.json()
-            except Exception as e:
-                logger.error(f"Error fetching Binance deposit history: {e}")
+                    res = await client.get(url, headers=headers)
+                    if res.status_code == 200:
+                        return res.json()
+                    elif res.status_code in (418, 429):
+                        logger.warning(f"Deposit check on {base_url} hit limit ({res.status_code}). Trying next endpoint...")
+                        continue
+                except Exception as e:
+                    logger.warning(f"Error fetching deposit from {base_url}: {e}")
+                    continue
         return []

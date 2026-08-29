@@ -2226,6 +2226,38 @@ async def setbinancekey_command(update: Update, context: ContextTypes.DEFAULT_TY
     await database.set_setting("binance_pay_api_key", new_key)
     await update.message.reply_text(f"✅ *Binance Pay Merchant API Key updated:* `{new_key[:8]}...`", parse_mode=ParseMode.MARKDOWN)
 
+async def setbinanceproxy_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if not is_admin(user_id):
+        await update.message.reply_text("❌ Unauthorized.")
+        return
+
+    if not context.args:
+        curr_proxy = await database.get_setting("binance_proxy", "None")
+        await update.message.reply_text(
+            f"ℹ️ *Current Binance Proxy:* `{curr_proxy}`\n\n"
+            "Usage:\n"
+            "• Set proxy: `/setbinanceproxy http://user:pass@host:port`\n"
+            "• Remove proxy: `/setbinanceproxy clear`",
+            parse_mode=ParseMode.MARKDOWN
+        )
+        return
+
+    proxy_val = context.args[0].strip()
+    if proxy_val.lower() == "clear":
+        await database.set_setting("binance_proxy", "")
+        await update.message.reply_text("✅ *Binance Proxy removed (Direct connection restored).*", parse_mode=ParseMode.MARKDOWN)
+    else:
+        await database.set_setting("binance_proxy", proxy_val)
+        await update.message.reply_text(f"✅ *Binance Proxy updated:*\n`{proxy_val}`\n\nTesting connection...", parse_mode=ParseMode.MARKDOWN)
+        res = await binance_client.get_live_balances()
+        if res.get("success"):
+            total_usdt = res.get("total_usdt_all", 0.0)
+            await update.message.reply_text(f"🎉 *Proxy Connected Successfully! Total Balance:* `${total_usdt:.2f}` USDT", parse_mode=ParseMode.MARKDOWN)
+        else:
+            await update.message.reply_text(f"⚠️ *Proxy saved, but test failed:*\n`{res.get('error')}`", parse_mode=ParseMode.MARKDOWN)
+
+
 async def addbalance_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if not is_admin(user_id):
@@ -2560,6 +2592,7 @@ def main():
     app.add_handler(CommandHandler("margins", margins_command))
     app.add_handler(CommandHandler("setkey", setkey_command))
     app.add_handler(CommandHandler("setbinancekey", setbinancekey_command))
+    app.add_handler(CommandHandler("setbinanceproxy", setbinanceproxy_command))
     app.add_handler(CommandHandler("setgroup", setgroup_command))
     app.add_handler(CommandHandler("getid", getid_command))
     app.add_handler(CommandHandler("testgroup", testgroup_command))
