@@ -94,6 +94,27 @@ class PaymentAPIClient:
                                     continue # transfer wasn't to admin's wallet
 
                                 if actual_amount >= (expected_amount - 0.05):
+                                    # Security Check: Verify Block Timestamp (Prevent Replay of Old Past TxHashes)
+                                    import time
+                                    block_num = receipt.get("blockNumber")
+                                    block_payload = {
+                                        "jsonrpc": "2.0",
+                                        "method": "eth_getBlockByNumber",
+                                        "params": [block_num, False],
+                                        "id": 2
+                                    }
+                                    b_res = await client.post(rpc, json=block_payload)
+                                    if b_res.status_code == 200:
+                                        b_data = b_res.json().get("result", {})
+                                        ts_hex = b_data.get("timestamp")
+                                        if ts_hex:
+                                            block_ts = int(ts_hex, 16)
+                                            now_ts = int(time.time())
+                                            # If transaction was confirmed more than 2 hours (7200s) ago, reject!
+                                            if (now_ts - block_ts) > 7200:
+                                                logger.warning(f"Rejected old TxHash {tx_hash}: Block age {(now_ts - block_ts)/3600:.1f} hours old")
+                                                return {"success": False, "reason": "Transaction timestamp is too old (expired). Old past transactions cannot be reused."}
+
                                     return {
                                         "success": True,
                                         "status": "PAID",
@@ -109,6 +130,7 @@ class PaymentAPIClient:
 
     async def verify_onchain_tron(self, tx_hash: str, expected_to: str, expected_amount: float) -> Dict[str, Any]:
         """Directly verify TRC20 USDT transaction on TRON blockchain."""
+        import time
         tx_hash = tx_hash.strip().replace("0x", "")
         url = "https://api.trongrid.io/wallet/gettransactioninfobyid"
         payload = {"value": tx_hash}
@@ -120,6 +142,15 @@ class PaymentAPIClient:
                     data = res.json()
                     receipt = data.get("receipt", {})
                     if receipt.get("result") == "SUCCESS":
+                        # Security Check: Verify Block Timestamp (Prevent Replay of Old Past TxHashes)
+                        block_ts_ms = data.get("blockTimeStamp", 0)
+                        if block_ts_ms:
+                            block_ts = block_ts_ms / 1000
+                            now_ts = time.time()
+                            if (now_ts - block_ts) > 7200:
+                                logger.warning(f"Rejected old TRON TxHash {tx_hash}: Block age {(now_ts - block_ts)/3600:.1f} hours old")
+                                return {"success": False, "reason": "Transaction timestamp is too old (expired). Old past transactions cannot be reused."}
+
                         for log in data.get("log", []):
                             # Check USDT contract address in hex
                             if log.get("address", "").lower() == USDT_TRC20_HEX:
@@ -140,6 +171,7 @@ class PaymentAPIClient:
 
     async def verify_onchain_erc20(self, tx_hash: str, expected_to: str, expected_amount: float) -> Dict[str, Any]:
         """Directly verify ERC20 USDT transaction on Ethereum blockchain."""
+        import time
         tx_hash = tx_hash.strip()
         if not tx_hash.startswith("0x"):
             tx_hash = "0x" + tx_hash
@@ -179,6 +211,24 @@ class PaymentAPIClient:
                                     continue
 
                                 if actual_amount >= (expected_amount - 0.05):
+                                    # Timestamp verification
+                                    block_num = receipt.get("blockNumber")
+                                    block_payload = {
+                                        "jsonrpc": "2.0",
+                                        "method": "eth_getBlockByNumber",
+                                        "params": [block_num, False],
+                                        "id": 2
+                                    }
+                                    b_res = await client.post(rpc, json=block_payload)
+                                    if b_res.status_code == 200:
+                                        b_data = b_res.json().get("result", {})
+                                        ts_hex = b_data.get("timestamp")
+                                        if ts_hex:
+                                            block_ts = int(ts_hex, 16)
+                                            now_ts = int(time.time())
+                                            if (now_ts - block_ts) > 7200:
+                                                return {"success": False, "reason": "Transaction timestamp is too old (expired)."}
+
                                     return {
                                         "success": True,
                                         "status": "PAID",
