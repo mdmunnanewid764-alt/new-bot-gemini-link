@@ -1,0 +1,17 @@
+# Environment
+.env
+
+# Databases
+*.db
+database/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Temporary / Scratch / Backups
+backups/
+scratch/
+.system_generated/
