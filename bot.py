@@ -59,7 +59,7 @@ async def get_notification_group_id() -> int:
     return NOTIFICATION_GROUP_ID
 
 async def broadcast_group_order(bot, buyer_name: str, username: str, user_id: int, order_id: str, prod_name: str, qty: int, total_price: float):
-    """Send real-time order success notification to Telegram Group."""
+    """Send real-time order success notification to Telegram Group with Open Bot button."""
     try:
         grp_id = await get_notification_group_id()
         u_handle = f"@{username}" if username else (buyer_name or f"User {user_id}")
@@ -75,12 +75,21 @@ async def broadcast_group_order(bot, buyer_name: str, username: str, user_id: in
             f"⚡ *Status:* `Completed / Instant Delivery`\n"
             f"📅 *Date:* `{date_str}`"
         )
-        await bot.send_message(chat_id=grp_id, text=msg, parse_mode=ParseMode.MARKDOWN)
+        try:
+            bot_info = await bot.get_me()
+            bot_user = bot_info.username or "NexvoraGeminiShopebot"
+        except Exception:
+            bot_user = "NexvoraGeminiShopebot"
+
+        btn = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🛒 Open Bot / Buy Now 🚀", url=f"https://t.me/{bot_user}?start=group_order")]
+        ])
+        await bot.send_message(chat_id=grp_id, text=msg, parse_mode=ParseMode.MARKDOWN, reply_markup=btn)
     except Exception as e:
         logger.warning(f"Could not send order notification to group: {e}")
 
 async def broadcast_group_deposit(bot, user_name: str, username: str, user_id: int, amount: float, method: str, ref_id: str):
-    """Send real-time deposit success notification to Telegram Group."""
+    """Send real-time deposit success notification to Telegram Group with Open Bot button."""
     try:
         grp_id = await get_notification_group_id()
         u_handle = f"@{username}" if username else (user_name or f"User {user_id}")
@@ -95,7 +104,16 @@ async def broadcast_group_deposit(bot, user_name: str, username: str, user_id: i
             f"⚡ *Status:* `Approved & Verified`\n"
             f"📅 *Date:* `{date_str}`"
         )
-        await bot.send_message(chat_id=grp_id, text=msg, parse_mode=ParseMode.MARKDOWN)
+        try:
+            bot_info = await bot.get_me()
+            bot_user = bot_info.username or "NexvoraGeminiShopebot"
+        except Exception:
+            bot_user = "NexvoraGeminiShopebot"
+
+        btn = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🛒 Open Bot / Deposit 🚀", url=f"https://t.me/{bot_user}?start=group_deposit")]
+        ])
+        await bot.send_message(chat_id=grp_id, text=msg, parse_mode=ParseMode.MARKDOWN, reply_markup=btn)
     except Exception as e:
         logger.warning(f"Could not send deposit notification to group: {e}")
 
