@@ -481,6 +481,21 @@ async def get_margin_for_product(product_id: int) -> float:
         return margins[p_key]
     return margins.get("default", 0.20)
 
+async def delete_product_margin(product_key: str):
+    if USE_POSTGRES:
+        try:
+            pool = await get_pg_pool()
+            async with pool.acquire() as conn:
+                await conn.execute("DELETE FROM product_margins WHERE product_key = $1", str(product_key).strip())
+                return
+        except Exception as e:
+            logger.error(f"PG delete_product_margin error: {e}")
+
+    import aiosqlite
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("DELETE FROM product_margins WHERE product_key = ?", (str(product_key).strip(),))
+        await db.commit()
+
 async def get_user_balance(user_id: int) -> float:
     if USE_POSTGRES:
         try:

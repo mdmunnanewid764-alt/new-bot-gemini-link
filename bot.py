@@ -920,55 +920,110 @@ async def handle_admin_setwallet_callback(query, context: ContextTypes.DEFAULT_T
 async def handle_admin_margins_callback(query, context: ContextTypes.DEFAULT_TYPE):
     margins = await database.get_all_margins()
     default_margin = margins.get("default", 0.20)
-    gemini_prods = await catalog_sync.get_gemini_products()
+    all_prods = await catalog_sync.get_local_catalog(filter_gemini=False)
 
     text = (
-        "💎 *Gemini Products Pricing & Profit Margins*\n\n"
-        f"🌐 *Default Global Margin:* `+${default_margin:.2f}` USD\n\n"
+        "💎 *Product Pricing & Profit Margins Manager*\n\n"
+        f"🌐 *Global Default Profit Margin:* `+${default_margin:.2f}` USD\n\n"
+        "👇 *Tap any product below to set its profit margin or custom selling price:*\n\n"
     )
 
-    if gemini_prods:
-        text += "*📦 Synced Gemini Products:*\n"
-        for p in gemini_prods:
+    buttons = []
+    if all_prods:
+        for p in all_prods:
             p_id = p["id"]
             name = p["name"]
             base_p = p.get("supplier_price", 0.0)
             margin = p.get("margin", default_margin)
             sell_p = p.get("sell_price", base_p + margin)
-            stock = p.get("stock_count", "N/A")
+            is_custom = str(p_id) in margins
+            custom_badge = "⭐ Custom" if is_custom else "🌐 Default"
+            
             text += (
                 f"━━━━━━━━━━━━━━━━━━━\n"
-                f"🔹 *{name}* (ID: `{p_id}`)\n"
-                f"  • 🏢 *API Base Price:* `${base_p:.2f}` USD\n"
-                f"  • 💵 *Your Profit Margin:* `+${margin:.2f}` USD\n"
-                f"  • 🏷️ *User Selling Price:* `${sell_p:.2f}` USD\n"
-                f"  • 📊 *Available Stock:* `{stock}` In Stock\n"
+                f"📦 *{name}* (ID: `{p_id}`)\n"
+                f"  • 🏢 Base Price: `${base_p:.2f}` | 🏷️ Selling: *${sell_p:.2f}* USD\n"
+                f"  • 💵 Profit: *+${margin:.2f}* USD ({custom_badge})\n"
             )
-        text += "━━━━━━━━━━━━━━━━━━━\n\n"
+            
+            name_btn = name[:20] + "..." if len(name) > 23 else name
+            buttons.append([
+                InlineKeyboardButton(
+                    f"✏️ {name_btn} (+${margin:.2f} ➔ ${sell_p:.2f})",
+                    callback_data=f"admin_editprodmargin_{p_id}"
+                )
+            ])
+        text += "━━━━━━━━━━━━━━━━━━━\n"
     else:
-        text += "_No Gemini products synced yet. Tap Sync Products below._\n\n"
+        text += "_No products found in catalog. Tap Sync Products below._\n\n"
 
     catalog_gemini_only = (await database.get_setting("catalog_gemini_only", "1") == "1")
-    toggle_label = "💎 Mode: Gemini Only (Switch)" if catalog_gemini_only else "🌐 Mode: All Products (Switch)"
+    toggle_label = "💎 Store: Gemini Only (Switch)" if catalog_gemini_only else "🌐 Store: All Products (Switch)"
+
+    buttons.append([
+        InlineKeyboardButton("🌐 Set Global Default Margin", callback_data="admin_setmargin_default"),
+    ])
+    buttons.append([
+        InlineKeyboardButton(toggle_label, callback_data="admin_toggle_catalog_filter"),
+        InlineKeyboardButton("🔄 Sync Prices & Stock", callback_data="admin_sync_margins"),
+    ])
+    buttons.append([
+        InlineKeyboardButton("🔙 Admin Panel", callback_data="nav_admin"),
+    ])
+    await query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(buttons))
+
+async def handle_admin_edit_product_margin_callback(query, context: ContextTypes.DEFAULT_TYPE, prod_id: int):
+    p = await catalog_sync.get_local_product(prod_id)
+    if not p:
+        await query.answer("Product not found!", show_alert=True)
+        await handle_admin_margins_callback(query, context)
+        return
+
+    margins = await database.get_all_margins()
+    default_margin = margins.get("default", 0.20)
+    is_custom = str(prod_id) in margins
+    margin_type = "⭐ Custom Profit Margin" if is_custom else "🌐 Global Default Margin"
+    
+    base_p = float(p.get("supplier_price", 0.0))
+    margin = float(p.get("margin", default_margin))
+    sell_p = float(p.get("sell_price", base_p + margin))
+    stock = p.get("stock_count", "Unlimited")
+    if stock is None:
+        stock = "Unlimited"
+
+    text = (
+        f"📦 *Product Profit & Pricing Setup*\n\n"
+        f"📌 *Product Name:* {p['name']}\n"
+        f"🆔 *Product ID:* `{prod_id}`\n"
+        f"📊 *In Stock:* `{stock}`\n\n"
+        f"🏢 *Supplier Base Price:* `${base_p:.2f}` USD\n"
+        f"💵 *Your Current Profit:* `+${margin:.2f}` USD ({margin_type})\n"
+        f"🏷️ *Final User Selling Price:* `${sell_p:.2f}` USD\n\n"
+        "⚡ Choose a preset profit margin below or enter custom values:"
+    )
 
     buttons = [
         [
-            InlineKeyboardButton("+$0.10 Margin", callback_data="admin_setmargin_val_0.10"),
-            InlineKeyboardButton("+$0.20 Margin", callback_data="admin_setmargin_val_0.20"),
+            InlineKeyboardButton("+$0.10", callback_data=f"admin_setpmar_{prod_id}_0.10"),
+            InlineKeyboardButton("+$0.25", callback_data=f"admin_setpmar_{prod_id}_0.25"),
+            InlineKeyboardButton("+$0.50", callback_data=f"admin_setpmar_{prod_id}_0.50"),
+            InlineKeyboardButton("+$1.00", callback_data=f"admin_setpmar_{prod_id}_1.00"),
         ],
         [
-            InlineKeyboardButton("+$0.50 Margin", callback_data="admin_setmargin_val_0.50"),
-            InlineKeyboardButton("+$1.00 Margin", callback_data="admin_setmargin_val_1.00"),
+            InlineKeyboardButton("+$1.50", callback_data=f"admin_setpmar_{prod_id}_1.50"),
+            InlineKeyboardButton("+$2.00", callback_data=f"admin_setpmar_{prod_id}_2.00"),
+            InlineKeyboardButton("+$3.00", callback_data=f"admin_setpmar_{prod_id}_3.00"),
+            InlineKeyboardButton("+$5.00", callback_data=f"admin_setpmar_{prod_id}_5.00"),
         ],
         [
-            InlineKeyboardButton("✏️ Set Custom Margin", callback_data="admin_setmargin_default"),
-            InlineKeyboardButton("🏷️ Set Direct Selling Price", callback_data="admin_setsellprice_gemini"),
+            InlineKeyboardButton("✏️ Set Custom Profit ($)", callback_data=f"admin_prodcustommargin_{prod_id}"),
+            InlineKeyboardButton("🏷️ Set Selling Price ($)", callback_data=f"admin_prodcustomprice_{prod_id}"),
         ],
         [
-            InlineKeyboardButton(toggle_label, callback_data="admin_toggle_catalog_filter"),
-            InlineKeyboardButton("🔄 Sync Prices & Stock", callback_data="admin_sync_margins"),
+            InlineKeyboardButton("🔄 Reset to Default Margin", callback_data=f"admin_resetprodmargin_{prod_id}"),
         ],
         [
+            InlineKeyboardButton("📋 All Products List", callback_data="admin_margins"),
             InlineKeyboardButton("🔙 Admin Panel", callback_data="nav_admin"),
         ]
     ]
@@ -976,7 +1031,7 @@ async def handle_admin_margins_callback(query, context: ContextTypes.DEFAULT_TYP
 
 async def handle_admin_setmargin_val_callback(query, context: ContextTypes.DEFAULT_TYPE, val: float):
     await database.set_product_margin("default", val)
-    await query.answer(f"✅ Default margin set to ${val:.2f} USD")
+    await query.answer(f"✅ Default global margin set to ${val:.2f} USD")
     await handle_admin_margins_callback(query, context)
 
 async def handle_admin_key_callback(query, context: ContextTypes.DEFAULT_TYPE):
@@ -1222,13 +1277,57 @@ async def handle_admin_router(update: Update, context: ContextTypes.DEFAULT_TYPE
         await catalog_sync.sync_catalog_now(api_client)
         await query.answer("✅ Prices and stock synchronized with Shop API!", show_alert=True)
         await handle_admin_margins_callback(query, context)
+    elif data.startswith("admin_editprodmargin_"):
+        prod_id = int(data.replace("admin_editprodmargin_", ""))
+        await handle_admin_edit_product_margin_callback(query, context, prod_id)
+    elif data.startswith("admin_setpmar_"):
+        parts = data.split("_")
+        p_id = int(parts[2])
+        val = float(parts[3])
+        await database.set_product_margin(str(p_id), val)
+        await query.answer(f"✅ Margin set to +${val:.2f} USD")
+        await handle_admin_edit_product_margin_callback(query, context, p_id)
+    elif data.startswith("admin_resetprodmargin_"):
+        p_id = int(data.replace("admin_resetprodmargin_", ""))
+        await database.delete_product_margin(str(p_id))
+        await query.answer("🔄 Reset to default global margin!", show_alert=True)
+        await handle_admin_edit_product_margin_callback(query, context, p_id)
+    elif data.startswith("admin_prodcustommargin_"):
+        p_id = int(data.replace("admin_prodcustommargin_", ""))
+        p = await catalog_sync.get_local_product(p_id)
+        p_name = p['name'] if p else f"Product {p_id}"
+        context.user_data["waiting_for_prod_margin_id"] = p_id
+        await query.edit_message_text(
+            f"✏️ *Set Custom Profit Margin*\n\n"
+            f"📦 *Product:* {p_name} (ID: `{p_id}`)\n\n"
+            f"Send your desired profit margin in USD to add on top of supplier price (e.g. `0.65`):",
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data=f"admin_editprodmargin_{p_id}")]])
+        )
+    elif data.startswith("admin_prodcustomprice_"):
+        p_id = int(data.replace("admin_prodcustomprice_", ""))
+        p = await catalog_sync.get_local_product(p_id)
+        p_name = p['name'] if p else f"Product {p_id}"
+        base_p = float(p.get("supplier_price", 0.0)) if p else 0.0
+        context.user_data["waiting_for_prod_sellprice_id"] = p_id
+        await query.edit_message_text(
+            f"🏷️ *Set Direct Selling Price*\n\n"
+            f"📦 *Product:* {p_name} (ID: `{p_id}`)\n"
+            f"🏢 *Supplier Base Price:* `${base_p:.2f}` USD\n\n"
+            f"Send your desired **Final Selling Price** in USD (e.g. `1.80`):\n"
+            f"_(The bot will automatically calculate your profit margin)_",
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data=f"admin_editprodmargin_{p_id}")]])
+        )
     elif data.startswith("admin_setmargin_val_"):
         val = float(data.replace("admin_setmargin_val_", ""))
         await handle_admin_setmargin_val_callback(query, context, val)
     elif data == "admin_setmargin_default":
         context.user_data["waiting_for_admin_setmargin_default"] = True
         await query.edit_message_text(
-            "📐 *Set Gemini Profit Margin*\n\nSend the profit margin in USD to add on top of base price (e.g. `0.30`):",
+            "📐 *Set Global Default Profit Margin*\n\n"
+            "This margin applies to all products that don't have an individual custom margin.\n\n"
+            "Send the default profit margin in USD (e.g. `0.30`):",
             parse_mode=ParseMode.MARKDOWN,
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="admin_margins")]])
         )
@@ -2222,6 +2321,70 @@ async def handle_user_text_input(update: Update, context: ContextTypes.DEFAULT_T
         )
         return
 
+    # ── Admin: Set Individual Product Custom Margin ──
+    if context.user_data.get("waiting_for_prod_margin_id") and is_admin(user.id):
+        prod_id = context.user_data.pop("waiting_for_prod_margin_id")
+        try:
+            margin_val = float(text.strip())
+            if margin_val < 0:
+                await update.message.reply_text("❌ Margin cannot be negative.")
+                return
+        except ValueError:
+            await update.message.reply_text("❌ Invalid margin. Please enter a valid number (e.g. `0.50`).")
+            return
+
+        await database.set_product_margin(str(prod_id), margin_val)
+        p = await catalog_sync.get_local_product(prod_id)
+        p_name = p['name'] if p else f"Product {prod_id}"
+        base_p = float(p.get("supplier_price", 0.0)) if p else 0.0
+        final_sell_p = round(base_p + margin_val, 2)
+
+        await update.message.reply_text(
+            f"✅ *Profit Margin Saved for `{p_name}`!*\n\n"
+            f"🏢 *Supplier Base Price:* `${base_p:.2f}` USD\n"
+            f"💵 *Your Profit Margin:* `+${margin_val:.2f}` USD\n"
+            f"🏷️ *User Selling Price:* `${final_sell_p:.2f}` USD",
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("⚙️ Manage This Product", callback_data=f"admin_editprodmargin_{prod_id}")],
+                [InlineKeyboardButton("📋 All Products List", callback_data="admin_margins")],
+                [InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin")]
+            ])
+        )
+        return
+
+    # ── Admin: Set Individual Product Direct Selling Price ──
+    if context.user_data.get("waiting_for_prod_sellprice_id") and is_admin(user.id):
+        prod_id = context.user_data.pop("waiting_for_prod_sellprice_id")
+        try:
+            target_price = float(text.strip())
+            if target_price <= 0:
+                await update.message.reply_text("❌ Selling price must be greater than 0.")
+                return
+        except ValueError:
+            await update.message.reply_text("❌ Invalid price. Please enter a valid number (e.g. `1.50`).")
+            return
+
+        p = await catalog_sync.get_local_product(prod_id)
+        p_name = p['name'] if p else f"Product {prod_id}"
+        base_p = float(p.get("supplier_price", 0.0)) if p else 0.0
+        calc_margin = round(max(0.0, target_price - base_p), 2)
+        await database.set_product_margin(str(prod_id), calc_margin)
+
+        await update.message.reply_text(
+            f"✅ *Selling Price Updated for `{p_name}`!*\n\n"
+            f"🏢 *Supplier Base Price:* `${base_p:.2f}` USD\n"
+            f"💵 *Calculated Profit Margin:* `+${calc_margin:.2f}` USD\n"
+            f"🏷️ *Final User Selling Price:* `${target_price:.2f}` USD",
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("⚙️ Manage This Product", callback_data=f"admin_editprodmargin_{prod_id}")],
+                [InlineKeyboardButton("📋 All Products List", callback_data="admin_margins")],
+                [InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin")]
+            ])
+        )
+        return
+
     # ── Admin: Set Default Margin ──
     if context.user_data.get("waiting_for_admin_setmargin_default") and is_admin(user.id):
         context.user_data["waiting_for_admin_setmargin_default"] = False
@@ -2234,21 +2397,14 @@ async def handle_user_text_input(update: Update, context: ContextTypes.DEFAULT_T
             await update.message.reply_text("❌ Invalid margin amount.")
             return
         await database.set_product_margin("default", margin_val)
-        gemini_prods = await catalog_sync.get_gemini_products()
-        for gp in gemini_prods:
-            await database.set_product_margin(str(gp["id"]), margin_val)
-
-        base_p = gemini_prods[0].get("supplier_price", 0.40) if gemini_prods else 0.40
-        final_sell_p = round(base_p + margin_val, 2)
 
         await update.message.reply_text(
-            f"✅ *Gemini Profit Margin Updated:*\n\n"
-            f"🏢 *Supplier Base Price:* `${base_p:.2f}` USD\n"
-            f"💵 *New Profit Margin:* `+${margin_val:.2f}` USD\n"
-            f"🏷️ *User Selling Price:* `${final_sell_p:.2f}` USD",
+            f"✅ *Global Default Profit Margin Updated:*\n\n"
+            f"🌐 *New Default Margin:* `+${margin_val:.2f}` USD\n\n"
+            "This margin is now applied to all products that do not have custom individual margins.",
             parse_mode=ParseMode.MARKDOWN,
             reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("💎 View Gemini Margins", callback_data="admin_margins")],
+                [InlineKeyboardButton("📋 All Products Pricing", callback_data="admin_margins")],
                 [InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin")]
             ])
         )
@@ -2406,6 +2562,67 @@ async def setbinanceproxy_command(update: Update, context: ContextTypes.DEFAULT_
         else:
             await update.message.reply_text(f"⚠️ *Proxy saved, but test failed:*\n`{res.get('error')}`", parse_mode=ParseMode.MARKDOWN)
 
+
+async def margins_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if not is_admin(user_id):
+        await update.message.reply_text("❌ Unauthorized.")
+        return
+    await handle_admin_margins_callback(update, context)
+
+async def setmargin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if not is_admin(user_id):
+        await update.message.reply_text("❌ Unauthorized.")
+        return
+
+    if not context.args or len(context.args) < 2:
+        await update.message.reply_text(
+            "⚠️ *Usage:*\n"
+            "• Set for specific product: `/setmargin <product_id> <margin_amount>` (e.g. `/setmargin 9 0.60`)\n"
+            "• Set global default margin: `/setmargin default <amount>` (e.g. `/setmargin default 0.25`)",
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("💎 Open Pricing UI", callback_data="admin_margins")]])
+        )
+        return
+
+    target = context.args[0].strip().lower()
+    try:
+        margin_val = float(context.args[1].strip())
+        if margin_val < 0:
+            await update.message.reply_text("❌ Margin cannot be negative.")
+            return
+    except ValueError:
+        await update.message.reply_text("❌ Invalid margin amount. Enter a number (e.g. 0.50).")
+        return
+
+    await database.set_product_margin(target, margin_val)
+    if target == "default":
+        msg = f"✅ *Global Default Profit Margin updated:*\n`+${margin_val:.2f}` USD added to all default products."
+    else:
+        try:
+            prod_id = int(target)
+            p = await catalog_sync.get_local_product(prod_id)
+            p_name = p['name'] if p else f"Product {prod_id}"
+            base_p = float(p.get('supplier_price', 0.0)) if p else 0.0
+            sell_p = round(base_p + margin_val, 2)
+            msg = (
+                f"✅ *Profit Margin Updated for `{p_name}`:*\n\n"
+                f"🏢 Supplier Base Price: `${base_p:.2f}` USD\n"
+                f"💵 Your Profit: `+${margin_val:.2f}` USD\n"
+                f"🏷️ Final Selling Price: `${sell_p:.2f}` USD"
+            )
+        except Exception:
+            msg = f"✅ *Product `{target}` Margin updated:*\n`+${margin_val:.2f}` USD."
+
+    await update.message.reply_text(
+        msg,
+        parse_mode=ParseMode.MARKDOWN,
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("💎 Product Pricing UI", callback_data="admin_margins")],
+            [InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin")]
+        ])
+    )
 
 async def addbalance_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
