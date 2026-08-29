@@ -18,11 +18,25 @@ PG_DATABASE = os.getenv("POSTGRES_DATABASE") or os.getenv("PG_DATABASE") or "pos
 
 USE_POSTGRES = bool(DATABASE_URL or (PG_HOST and PG_USER and PG_PASSWORD))
 
+import asyncio
 _pg_pool = None
+_pg_pool_loop = None
 
 async def get_pg_pool():
-    global _pg_pool
-    if _pg_pool is None:
+    global _pg_pool, _pg_pool_loop
+    try:
+        current_loop = asyncio.get_running_loop()
+    except RuntimeError:
+        current_loop = None
+
+    if _pg_pool is None or _pg_pool_loop is None or _pg_pool_loop != current_loop or _pg_pool_loop.is_closed():
+        if _pg_pool is not None:
+            try:
+                _pg_pool.terminate()
+            except Exception:
+                pass
+            _pg_pool = None
+
         import asyncpg
         from urllib.parse import urlparse, unquote
         
@@ -61,6 +75,7 @@ async def get_pg_pool():
             max_size=10,
             timeout=10
         )
+        _pg_pool_loop = current_loop
     return _pg_pool
 
 async def init_db():
