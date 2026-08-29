@@ -59,14 +59,14 @@ async def get_notification_group_id() -> int:
     return NOTIFICATION_GROUP_ID
 
 async def broadcast_group_order(bot, buyer_name: str, username: str, user_id: int, order_id: str, prod_name: str, qty: int, total_price: float):
-    """Send real-time order success notification to Telegram Group with Open Bot button."""
+    """Send real-time order success notification to Telegram Group without clickable username."""
     try:
         grp_id = await get_notification_group_id()
-        u_handle = f"@{username}" if username else (buyer_name or f"User {user_id}")
+        display_name = (buyer_name or f"User {user_id}").strip()
         date_str = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
         msg = (
             "🛍️ *New Order Delivered Successfully!*\n\n"
-            f"👤 *Buyer:* {buyer_name} ({u_handle})\n"
+            f"👤 *Buyer:* {display_name}\n"
             f"🆔 *User ID:* `{user_id}`\n"
             f"🧾 *Order ID:* `#{order_id}`\n"
             f"📦 *Product:* {prod_name}\n"
@@ -89,14 +89,14 @@ async def broadcast_group_order(bot, buyer_name: str, username: str, user_id: in
         logger.warning(f"Could not send order notification to group: {e}")
 
 async def broadcast_group_deposit(bot, user_name: str, username: str, user_id: int, amount: float, method: str, ref_id: str):
-    """Send real-time deposit success notification to Telegram Group with Open Bot button."""
+    """Send real-time deposit success notification to Telegram Group without clickable username."""
     try:
         grp_id = await get_notification_group_id()
-        u_handle = f"@{username}" if username else (user_name or f"User {user_id}")
+        display_name = (user_name or f"User {user_id}").strip()
         date_str = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
         msg = (
             "💰 *Deposit Confirmed & Credited!*\n\n"
-            f"👤 *User:* {user_name} ({u_handle})\n"
+            f"👤 *User:* {display_name}\n"
             f"🆔 *User ID:* `{user_id}`\n"
             f"💵 *Amount Credited:* `+${amount:.2f}` USD\n"
             f"🌐 *Payment Method:* `{method}`\n"
