@@ -2,6 +2,8 @@ import asyncio
 import logging
 import os
 import sys
+import threading
+from http.server import HTTPServer, BaseHTTPRequestHandler
 from dotenv import load_dotenv
 
 import database
@@ -14,6 +16,39 @@ logging.basicConfig(
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
+
+class HealthCheckHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header('Content-type', 'text/plain')
+        self.end_headers()
+        self.wfile.write(b"OK - Telegram Shop Bot is live and running!")
+
+    def do_HEAD(self):
+        self.send_response(200)
+        self.send_header('Content-type', 'text/plain')
+        self.end_headers()
+
+    def log_message(self, format, *args):
+        # Suppress routine health check logs from spamming
+        return
+
+def start_health_server():
+    """Start an HTTP health-check server for Render Web Service compatibility."""
+    port_str = os.getenv("PORT")
+    if port_str:
+        port = int(port_str)
+    else:
+        # Default port if PORT is not set
+        port = 8080
+    
+    try:
+        server = HTTPServer(("0.0.0.0", port), HealthCheckHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        logger.info(f"Health check HTTP server started on port {port} for Render Free Web Service.")
+    except Exception as e:
+        logger.warning(f"Could not start HTTP health server on port {port}: {e}")
 
 async def startup_checks():
     logger.info("Initializing database...")
@@ -43,6 +78,7 @@ async def startup_checks():
         logger.warning("Shop API Key is not set yet! You can set it in .env or send /setkey <YOUR_KEY> to the bot as admin.")
 
 def main():
+    start_health_server()
     asyncio.run(startup_checks())
     
     from bot import main as start_bot
