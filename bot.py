@@ -2157,16 +2157,15 @@ async def handle_user_text_input(update: Update, context: ContextTypes.DEFAULT_T
     if context.user_data.get("waiting_for_admin_broadcast") and is_admin(user.id):
         context.user_data["waiting_for_admin_broadcast"] = False
         all_users = await database.get_all_user_ids()
-        success_count = 0
-        fail_count = 0
-        for u_id in all_users:
-            try:
-                await context.bot.send_message(chat_id=u_id, text=text, parse_mode=ParseMode.MARKDOWN)
-                success_count += 1
-            except Exception:
-                fail_count += 1
+        
+        # Launch broadcast in background non-blocking task
+        asyncio.create_task(send_broadcast_background(context.bot, user.id, text))
+        
         await update.message.reply_text(
-            f"📢 *Broadcast Complete!*\n\n🟢 Delivered: `{success_count}`\n🔴 Failed: `{fail_count}`",
+            f"🚀 *Broadcast Launched in Background!*\n\n"
+            f"👥 Sending to `{len(all_users)}` registered users.\n\n"
+            "⚡ *The bot remains 100% active and will respond to /start and all users instantly!* "
+            "You will receive a completion summary when it finishes.",
             parse_mode=ParseMode.MARKDOWN,
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin")]])
         )
@@ -2421,6 +2420,63 @@ async def addbalance_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
         f"💳 *New Balance:* `${new_bal:.2f}` USD",
         parse_mode=ParseMode.MARKDOWN,
         reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin")]])
+    )
+
+async def send_broadcast_background(bot, admin_id: int, message_text: str):
+    """Send broadcast messages in background with rate-limiting without blocking user interactions."""
+    all_users = await database.get_all_user_ids()
+    total_users = len(all_users)
+    success_count = 0
+    fail_count = 0
+    
+    logger.info(f"Starting background broadcast to {total_users} users...")
+    for u_id in all_users:
+        try:
+            await bot.send_message(chat_id=u_id, text=message_text, parse_mode=ParseMode.MARKDOWN)
+            success_count += 1
+        except Exception:
+            fail_count += 1
+        # Smooth rate limiting (approx 25 msgs/sec to stay under Telegram limit)
+        await asyncio.sleep(0.04)
+
+    logger.info(f"Broadcast completed: {success_count} sent, {fail_count} failed.")
+    try:
+        await bot.send_message(
+            chat_id=admin_id,
+            text=(
+                f"📢 *Broadcast Completed!*\n\n"
+                f"👥 Total Target Users: `{total_users}`\n"
+                f"🟢 Delivered Successfully: `{success_count}`\n"
+                f"🔴 Failed / Blocked: `{fail_count}`"
+            ),
+            parse_mode=ParseMode.MARKDOWN
+        )
+    except Exception as e:
+        logger.error(f"Error sending broadcast completion notification: {e}")
+
+async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if not is_admin(user_id):
+        await update.message.reply_text("❌ Unauthorized.")
+        return
+
+    if not context.args:
+        context.user_data["waiting_for_admin_broadcast"] = True
+        await update.message.reply_text(
+            "📢 *Broadcast Announcement*\n\nSend the message you want to broadcast to all registered bot users:",
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="nav_admin")]])
+        )
+        return
+
+    msg_text = " ".join(context.args)
+    all_users = await database.get_all_user_ids()
+    asyncio.create_task(send_broadcast_background(context.bot, user_id, msg_text))
+    await update.message.reply_text(
+        f"🚀 *Broadcast Launched in Background!*\n\n"
+        f"👥 Sending to `{len(all_users)}` users in the background.\n"
+        "⚡ The bot will continue responding normally to all users.",
+        parse_mode=ParseMode.MARKDOWN
     )
 
 async def deposits_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
