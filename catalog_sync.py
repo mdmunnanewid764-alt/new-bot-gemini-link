@@ -33,8 +33,104 @@ async def init_catalog_tables():
         """)
         await db.commit()
 
-async def sync_catalog_now(api_client: Optional[ShopAPIClient] = None) -> Dict[str, Any]:
-    """Fetch live products from Shop API and update local synced database."""
+async def notify_new_products_alert(bot, new_products: List[Dict[str, Any]], restocked_products: List[Dict[str, Any]]):
+    """Notify group and all registered users when new products or stock are added."""
+    if not bot or (not new_products and not restocked_products):
+        return
+
+    margins = await database.get_all_margins()
+    default_margin = margins.get("default", 0.20)
+
+    items_text = ""
+    if new_products:
+        items_text += "🆕 *Newly Added Products:*\n"
+        for p in new_products:
+            p_id = p["id"]
+            name = p["name"]
+            supplier_p = float(p.get("sell_price", 0.0))
+            margin = margins.get(str(p_id), default_margin)
+            sell_p = round(supplier_p + margin, 2)
+            stock = p.get("stock_count")
+            stock_str = f"`{stock}` in stock" if stock is not None else "`Available`"
+
+            items_text += (
+                f"━━━━━━━━━━━━━━━━━━━\n"
+                f"📦 *{name}*\n"
+                f"💵 Price: `${sell_p:.2f}` USD\n"
+                f"📊 Stock Added: {stock_str}\n"
+                f"⚡ Auto-Delivered Instantly\n"
+            )
+
+    if restocked_products:
+        items_text += "\n🔄 *Restocked Products:*\n"
+        for p in restocked_products:
+            p_id = p["id"]
+            name = p["name"]
+            supplier_p = float(p.get("sell_price", 0.0))
+            margin = margins.get(str(p_id), default_margin)
+            sell_p = round(supplier_p + margin, 2)
+            stock = p.get("stock_count")
+            stock_str = f"`{stock}` available" if stock is not None else "`Available`"
+
+            items_text += (
+                f"━━━━━━━━━━━━━━━━━━━\n"
+                f"📦 *{name}*\n"
+                f"💵 Price: `${sell_p:.2f}` USD\n"
+                f"📊 Current Stock: {stock_str}\n"
+            )
+
+    total_added = len(new_products) + len(restocked_products)
+    broadcast_msg = (
+        f"🎉 *New Products & Stock Update Alert! ({total_added} items)*\n\n"
+        "We have just added new products and fresh stock to the shop:\n\n"
+        f"{items_text}"
+        f"━━━━━━━━━━━━━━━━━━━\n\n"
+        "🛍️ *Tap the button below to browse and buy instantly!*"
+    )
+
+    try:
+        from telegram import InlineKeyboardMarkup, InlineKeyboardButton
+        from telegram.constants import ParseMode
+
+        bot_info = await bot.get_me()
+        bot_user = bot_info.username or "NexvoraGeminiShopebot"
+        btn = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🛒 Open Shop / Buy Now 🚀", url=f"https://t.me/{bot_user}?start=new_products")]
+        ])
+
+        # 1. Send to Notification Group / Channel
+        notif_grp = await database.get_setting("notification_group_id")
+        grp_id = int(notif_grp) if notif_grp else None
+        if grp_id:
+            try:
+                await bot.send_message(chat_id=grp_id, text=broadcast_msg, parse_mode=ParseMode.MARKDOWN, reply_markup=btn)
+            except Exception as e:
+                logger.warning(f"Failed to send new products alert to group: {e}")
+
+        # 2. Broadcast to all registered bot users in background
+        all_user_ids = await database.get_all_user_ids()
+        logger.info(f"Broadcasting new product alert to {len(all_user_ids)} users...")
+
+        async def _broadcast_task():
+            success = 0
+            for u_id in all_user_ids:
+                try:
+                    await bot.send_message(chat_id=u_id, text=broadcast_msg, parse_mode=ParseMode.MARKDOWN, reply_markup=btn)
+                    success += 1
+                except Exception:
+                    pass
+                await asyncio.sleep(0.04)
+            logger.info(f"New product alert delivered to {success} users.")
+
+        asyncio.create_task(_broadcast_task())
+
+    except Exception as e:
+        logger.error(f"Error notifying new products: {e}")
+
+async def sync_catalog_now(api_client: Optional[ShopAPIClient] = None, bot = None) -> Dict[str, Any]:
+    """Fetch live products from Shop API and update local synced database.
+    Detects newly added or restocked products and broadcasts to all users.
+    """
     if api_client is None:
         api_client = ShopAPIClient()
 
@@ -46,8 +142,19 @@ async def sync_catalog_now(api_client: Optional[ShopAPIClient] = None) -> Dict[s
         logger.error(f"Catalog sync failed: {e}")
         return {"status": "error", "message": str(e), "synced_count": 0}
 
+    # Fetch existing products in local DB to detect new items and restocks
+    existing_products = {}
+    async with aiosqlite.connect(database.DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute("SELECT supplier_product_id, name, sell_price, stock_count, in_stock FROM products_synced") as cursor:
+            rows = await cursor.fetchall()
+            for r in rows:
+                existing_products[r["supplier_product_id"]] = dict(r)
+
     now_str = datetime.utcnow().isoformat()
     synced_ids = []
+    new_products = []
+    restocked_products = []
 
     async with aiosqlite.connect(database.DB_PATH) as db:
         for p in remote_products:
@@ -59,6 +166,18 @@ async def sync_catalog_now(api_client: Optional[ShopAPIClient] = None) -> Dict[s
             price = float(p.get("sell_price", 0.0))
             stock = p.get("stock_count")
             in_stock = 1 if p.get("in_stock", True) else 0
+
+            # Check if this product is brand new or newly restocked
+            if existing_products:
+                if p_id not in existing_products and in_stock == 1:
+                    new_products.append({"id": p_id, "name": name, "sell_price": price, "stock_count": stock})
+                elif p_id in existing_products:
+                    prev = existing_products[p_id]
+                    prev_stock = prev.get("stock_count") or 0
+                    prev_instock = prev.get("in_stock", 0)
+                    curr_stock = stock or 0
+                    if (prev_instock == 0 or prev_stock == 0) and in_stock == 1 and curr_stock > 0:
+                        restocked_products.append({"id": p_id, "name": name, "sell_price": price, "stock_count": stock})
 
             await db.execute("""
                 INSERT INTO products_synced (supplier_product_id, name, sell_price, stock_count, in_stock, is_enabled, last_synced)
@@ -85,7 +204,17 @@ async def sync_catalog_now(api_client: Optional[ShopAPIClient] = None) -> Dict[s
         await db.commit()
 
     logger.info(f"Catalog Sync Success: {len(synced_ids)} products synchronized locally.")
-    return {"status": "success", "synced_count": len(synced_ids)}
+
+    # Trigger announcement if new products or restocks detected
+    if bot and (new_products or restocked_products):
+        await notify_new_products_alert(bot, new_products, restocked_products)
+
+    return {
+        "status": "success",
+        "synced_count": len(synced_ids),
+        "new_count": len(new_products),
+        "restocked_count": len(restocked_products)
+    }
 
 async def get_local_catalog(filter_gemini: Optional[bool] = None) -> List[Dict[str, Any]]:
     """Retrieve in-stock synced products from local DB with added profit margin.
@@ -173,12 +302,12 @@ async def get_local_product(product_id: int) -> Optional[Dict[str, Any]]:
             p_dict["supplier_price"] = supplier_price
             return p_dict
 
-async def start_periodic_catalog_sync(api_client: ShopAPIClient, interval_seconds: int = 180):
-    """Background task to sync product catalog periodically (default 3 mins)."""
+async def start_periodic_catalog_sync(api_client: ShopAPIClient, bot = None, interval_seconds: int = 120):
+    """Background task to sync product catalog periodically and notify users on new products."""
     logger.info(f"Starting periodic product sync worker (interval: {interval_seconds}s)...")
     while True:
         try:
-            await sync_catalog_now(api_client)
+            await sync_catalog_now(api_client, bot=bot)
         except Exception as e:
             logger.error(f"Error in catalog sync loop: {e}")
         await asyncio.sleep(interval_seconds)

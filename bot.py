@@ -3018,8 +3018,8 @@ def main():
         builder.base_url(tg_base_url)
 
     async def on_startup(application):
-        logger.info("Bot application started. Launching background product auto-sync worker (every 2 mins)...")
-        asyncio.create_task(catalog_sync.start_periodic_catalog_sync(api_client, interval_seconds=120))
+        logger.info("Bot application started. Launching background product auto-sync & announcement worker (every 2 mins)...")
+        asyncio.create_task(catalog_sync.start_periodic_catalog_sync(api_client, bot=application.bot, interval_seconds=120))
 
     builder.post_init(on_startup)
     app = builder.build()
