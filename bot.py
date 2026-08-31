@@ -1856,9 +1856,12 @@ async def handle_txhash_prompt(update: Update, context: ContextTypes.DEFAULT_TYP
 
     label = NETWORK_LABELS.get(network, network)
     await query.edit_message_text(
-        f"⚡ *Submit TxHash — {label}*\n\n"
+        f"⚡ *Submit TxHash / Transfer ID — {label}*\n\n"
         f"🆔 *Trade No:* `{trade_no}`\n\n"
-        f"Paste your transaction hash (TxHash) below:",
+        "📋 *Paste your TxID / TxHash below:*\n"
+        "• **Blockchain TxHash** (e.g. `0x123abc...`)\n"
+        "• Or **Binance Internal Transfer ID** (e.g. `406636190834`)\n\n"
+        "💡 _In Binance: Go to Wallets ➔ History ➔ Withdrawal ➔ Copy the TxID._",
         parse_mode=ParseMode.MARKDOWN,
         reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="nav_deposit")]]),
     )
@@ -1888,12 +1891,22 @@ async def handle_user_text_input(update: Update, context: ContextTypes.DEFAULT_T
         network = context.user_data.pop("txhash_network", "BEP20")
         tx_hash = text.strip()
 
-        # 1. Anti-Fake Protection: Format validation
-        if len(tx_hash) < 15 or " " in tx_hash:
+        # Clean up input in case user copies Binance prefix text (e.g. "Transferencia fuera de la cadena 406636190834")
+        if " " in tx_hash:
+            parts = tx_hash.split()
+            # If last part is the actual ID / hash
+            if len(parts[-1]) >= 8:
+                tx_hash = parts[-1]
+
+        # 1. Anti-Fake Protection: Format validation (supports 64-char blockchain hash & 8-20 digit Binance Internal IDs)
+        is_valid_hash = (len(tx_hash) >= 20 and all(c in "0123456789abcdefABCDEFxX" for c in tx_hash))
+        is_binance_internal = (len(tx_hash) >= 8 and tx_hash.isdigit())
+
+        if not (is_valid_hash or is_binance_internal):
             await update.message.reply_text(
                 "❌ *Invalid Transaction Hash Format!*\n\n"
-                "Please enter a valid blockchain TxHash (e.g. `0x123abc...` or `a1b2c3...`).\n"
-                "Fake or invalid texts are not accepted.",
+                "Please enter a valid blockchain **TxHash** (e.g. `0x123abc...` / `a1b2c3...`) or **Binance Internal Transfer ID** (e.g. `406636190834`).\n\n"
+                "Fake or random texts are not accepted.",
                 parse_mode=ParseMode.MARKDOWN,
                 reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("💳 Back to Deposit", callback_data="nav_deposit")]])
             )
@@ -1904,8 +1917,8 @@ async def handle_user_text_input(update: Update, context: ContextTypes.DEFAULT_T
         if is_duplicate:
             await update.message.reply_text(
                 "🚫 *Duplicate / Reused TxHash Detected!*\n\n"
-                "This Transaction Hash has already been used or approved for another deposit.\n"
-                "Duplicate or fake submissions are strictly rejected.",
+                "This Transaction ID has already been used or approved for another deposit.\n"
+                "Duplicate submissions are strictly rejected.",
                 parse_mode=ParseMode.MARKDOWN,
                 reply_markup=InlineKeyboardMarkup([
                     [InlineKeyboardButton("💳 New Deposit", callback_data="nav_deposit")],
