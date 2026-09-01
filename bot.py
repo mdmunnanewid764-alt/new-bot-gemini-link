@@ -214,7 +214,10 @@ def main_menu_keyboard(user_id: int) -> InlineKeyboardMarkup:
             InlineKeyboardButton("👤 My Account", callback_data="nav_account"),
             InlineKeyboardButton("📜 My Orders", callback_data="nav_orders")
         ],
-        [InlineKeyboardButton("ℹ️ Help & Support", callback_data="nav_help")]
+        [
+            InlineKeyboardButton("💳 Withdraw", callback_data="nav_withdraw"),
+            InlineKeyboardButton("ℹ️ Help & Support", callback_data="nav_help")
+        ]
     ]
     if is_super_admin(user_id):
         buttons.append([InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin")])
@@ -241,6 +244,18 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif update.callback_query:
         await update.callback_query.edit_message_text(welcome_text, parse_mode=ParseMode.MARKDOWN, reply_markup=main_menu_keyboard(user.id))
 
+async def show_withdraw_menu(query, context: ContextTypes.DEFAULT_TYPE):
+    text = (
+        "💳 *Withdraw Balance*\n\n"
+        "⏳ *Coming Soon!*\n\n"
+        "⚡ _This feature is currently under active development and will be available soon._"
+    )
+    buttons = [
+        [InlineKeyboardButton("💬 Support", url=f"tg://user?id={ADMIN_ID}")],
+        [InlineKeyboardButton("🔙 Back to Main Menu", callback_data="nav_main")]
+    ]
+    await query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(buttons))
+
 async def handle_navigation(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -255,6 +270,9 @@ async def handle_navigation(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await show_products_list(query, context)
     elif data == "nav_deposit":
         await show_deposit_menu(query, context)
+    elif data == "nav_withdraw":
+        await query.answer("⏳ Coming Soon!", show_alert=True)
+        await show_withdraw_menu(query, context)
     elif data == "nav_account":
         await show_account_info(query, context)
     elif data == "nav_orders":
