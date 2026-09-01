@@ -71,12 +71,17 @@ async def get_pg_pool():
             password=password,
             database=database_name,
             ssl="require",
-            min_size=1,
-            max_size=10,
-            timeout=10
+            min_size=2,
+            max_size=25,
+            timeout=10,
+            command_timeout=10
         )
         _pg_pool_loop = current_loop
     return _pg_pool
+
+# Fast in-memory caches for zero-latency operations
+_SETTINGS_CACHE: dict[str, str] = {}
+_MARGINS_CACHE: dict[str, float] = {}
 
 async def init_db():
     """Initialize database tables."""
@@ -400,6 +405,9 @@ async def get_all_user_ids() -> list[int]:
             return [r[0] for r in rows]
 
 async def set_setting(key: str, value: str):
+    k_str = str(key)
+    v_str = str(value)
+    _SETTINGS_CACHE[k_str] = v_str
     if USE_POSTGRES:
         try:
             pool = await get_pg_pool()
@@ -408,7 +416,7 @@ async def set_setting(key: str, value: str):
                     INSERT INTO settings (key, value)
                     VALUES ($1, $2)
                     ON CONFLICT(key) DO UPDATE SET value = EXCLUDED.value
-                """, str(key), str(value))
+                """, k_str, v_str)
                 return
         except Exception as e:
             logger.error(f"PG set_setting error: {e}")
@@ -419,24 +427,35 @@ async def set_setting(key: str, value: str):
             INSERT INTO settings (key, value)
             VALUES (?, ?)
             ON CONFLICT(key) DO UPDATE SET value = excluded.value
-        """, (key, value))
+        """, (k_str, v_str))
         await db.commit()
 
 async def get_setting(key: str, default: str = None) -> str:
+    k_str = str(key)
+    if k_str in _SETTINGS_CACHE:
+        return _SETTINGS_CACHE[k_str]
+
+    val = default
     if USE_POSTGRES:
         try:
             pool = await get_pg_pool()
             async with pool.acquire() as conn:
-                val = await conn.fetchval("SELECT value FROM settings WHERE key = $1", str(key))
-                return val if val is not None else default
+                res = await conn.fetchval("SELECT value FROM settings WHERE key = $1", k_str)
+                if res is not None:
+                    val = res
         except Exception as e:
             logger.error(f"PG get_setting error: {e}")
+    else:
+        import aiosqlite
+        async with aiosqlite.connect(DB_PATH) as db:
+            async with db.execute("SELECT value FROM settings WHERE key = ?", (k_str,)) as cursor:
+                row = await cursor.fetchone()
+                if row:
+                    val = row[0]
 
-    import aiosqlite
-    async with aiosqlite.connect(DB_PATH) as db:
-        async with db.execute("SELECT value FROM settings WHERE key = ?", (key,)) as cursor:
-            row = await cursor.fetchone()
-            return row[0] if row else default
+    if val is not None:
+        _SETTINGS_CACHE[k_str] = val
+    return val
 
 async def record_order(user_id: int, order_id: int, product_id: int, product_name: str, quantity: int, total: float, status: str, delivered_keys: list):
     now = datetime.utcnow().isoformat()
@@ -532,6 +551,9 @@ async def get_total_users_balance() -> tuple[float, int]:
     return (stats.get("total_users_balance", 0.0), stats.get("users_with_balance", 0))
 
 async def set_product_margin(product_key: str, margin: float):
+    k_str = str(product_key).strip()
+    m_val = float(margin)
+    _MARGINS_CACHE[k_str] = m_val
     if USE_POSTGRES:
         try:
             pool = await get_pg_pool()
@@ -540,7 +562,7 @@ async def set_product_margin(product_key: str, margin: float):
                     INSERT INTO product_margins (product_key, margin)
                     VALUES ($1, $2)
                     ON CONFLICT(product_key) DO UPDATE SET margin = EXCLUDED.margin
-                """, str(product_key).strip(), float(margin))
+                """, k_str, m_val)
                 return
         except Exception as e:
             logger.error(f"PG set_product_margin error: {e}")
@@ -551,16 +573,20 @@ async def set_product_margin(product_key: str, margin: float):
             INSERT INTO product_margins (product_key, margin)
             VALUES (?, ?)
             ON CONFLICT(product_key) DO UPDATE SET margin = excluded.margin
-        """, (str(product_key).strip(), float(margin)))
+        """, (k_str, m_val))
         await db.commit()
 
 async def get_all_margins() -> dict:
+    if _MARGINS_CACHE:
+        return dict(_MARGINS_CACHE)
     if USE_POSTGRES:
         try:
             pool = await get_pg_pool()
             async with pool.acquire() as conn:
                 rows = await conn.fetch("SELECT product_key, margin FROM product_margins")
-                return {r["product_key"]: float(r["margin"]) for r in rows}
+                for r in rows:
+                    _MARGINS_CACHE[r["product_key"]] = float(r["margin"])
+                return dict(_MARGINS_CACHE)
         except Exception as e:
             logger.error(f"PG get_all_margins error: {e}")
 
@@ -568,7 +594,9 @@ async def get_all_margins() -> dict:
     async with aiosqlite.connect(DB_PATH) as db:
         async with db.execute("SELECT product_key, margin FROM product_margins") as cursor:
             rows = await cursor.fetchall()
-            return {r[0]: float(r[1]) for r in rows}
+            for r in rows:
+                _MARGINS_CACHE[r[0]] = float(r[1])
+            return dict(_MARGINS_CACHE)
 
 async def get_margin_for_product(product_id: int) -> float:
     margins = await get_all_margins()
@@ -578,18 +606,20 @@ async def get_margin_for_product(product_id: int) -> float:
     return margins.get("default", 0.20)
 
 async def delete_product_margin(product_key: str):
+    k_str = str(product_key).strip()
+    _MARGINS_CACHE.pop(k_str, None)
     if USE_POSTGRES:
         try:
             pool = await get_pg_pool()
             async with pool.acquire() as conn:
-                await conn.execute("DELETE FROM product_margins WHERE product_key = $1", str(product_key).strip())
+                await conn.execute("DELETE FROM product_margins WHERE product_key = $1", k_str)
                 return
         except Exception as e:
             logger.error(f"PG delete_product_margin error: {e}")
 
     import aiosqlite
     async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute("DELETE FROM product_margins WHERE product_key = ?", (str(product_key).strip(),))
+        await db.execute("DELETE FROM product_margins WHERE product_key = ?", (k_str,))
         await db.commit()
 
 async def get_user_balance(user_id: int) -> float:
