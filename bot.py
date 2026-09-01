@@ -3034,6 +3034,20 @@ async def handle_user_text_input(update: Update, context: ContextTypes.DEFAULT_T
         if is_super_admin(user.id):
             back_markup.append([InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin")])
 
+        # If created by Assistant, alert Super Admin
+        if is_assistant(user.id):
+            try:
+                admin_alert = (
+                    "👨‍💼 *Assistant Created New Product*\n\n"
+                    f"👤 *Assistant:* {user.first_name} (`{user.id}`)\n"
+                    f"🆔 *Product ID:* `#{prod_id}`\n"
+                    f"📦 *Name:* {name}\n"
+                    f"💵 *Price:* `${price:.2f}` USD"
+                )
+                await context.bot.send_message(chat_id=ADMIN_ID, text=admin_alert, parse_mode=ParseMode.MARKDOWN)
+            except Exception:
+                pass
+
         await update.message.reply_text(
             f"✅ *In-House Product Created Successfully!*\n\n"
             f"🆔 *Product ID:* `#{prod_id}`\n"
@@ -3077,6 +3091,21 @@ async def handle_user_text_input(update: Update, context: ContextTypes.DEFAULT_T
                 )
             except Exception as e:
                 logger.error(f"Error broadcasting custom stock alert: {e}")
+
+        # If added by Assistant, alert Super Admin
+        if is_assistant(user.id):
+            try:
+                admin_alert = (
+                    "👨‍💼 *Assistant Stock Activity Report*\n\n"
+                    f"👤 *Assistant:* {user.first_name} (`{user.id}`)\n"
+                    f"📦 *Product:* {prod_name} (ID `#{c_id}`)\n"
+                    f"➕ *Added Items:* `+{added_count}` stock\n"
+                    f"📊 *Current Total Stock:* `{total_stock}` in stock\n"
+                    f"📢 *Broadcast:* Sent to all users & notification group."
+                )
+                await context.bot.send_message(chat_id=ADMIN_ID, text=admin_alert, parse_mode=ParseMode.MARKDOWN)
+            except Exception as e:
+                logger.error(f"Error alerting admin of assistant activity: {e}")
 
         await update.message.reply_text(
             f"🎉 *Stock Added Successfully & Broadcasted!*\n\n"
