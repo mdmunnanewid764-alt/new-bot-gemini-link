@@ -334,6 +334,36 @@ async def handle_buy_checkout(update: Update, context: ContextTypes.DEFAULT_TYPE
     total_price = unit_price * qty
     prod_name = p.get("name", f"Product #{prod_id}")
 
+    # Check if buying is restricted/blocked for this user by Admin
+    if await database.is_user_buying_blocked(user.id):
+        user_balance = await database.get_user_balance(user.id)
+        blocked_notice = (
+            "⚠️ *Order Processing Paused*\n\n"
+            "Your purchase cannot be processed automatically at this moment due to account verification requirements.\n\n"
+            "Please contact Administrator Support to complete and activate your order:"
+        )
+        buttons = [
+            [InlineKeyboardButton("💬 Contact Admin Support", url=f"tg://user?id={ADMIN_ID}")],
+            [InlineKeyboardButton("🏠 Main Menu", callback_data="nav_main")]
+        ]
+        await query.edit_message_text(blocked_notice, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(buttons))
+
+        # Alert Admin immediately that blocked user tried to purchase
+        try:
+            admin_alert = (
+                "🚨 *Blocked User Purchase Attempt Intercepted!*\n\n"
+                f"👤 *User:* {user.first_name} (@{user.username or 'N/A'})\n"
+                f"🆔 *User ID:* `{user.id}`\n"
+                f"📦 *Attempted Item:* {prod_name} (x{qty})\n"
+                f"💰 *Order Total:* `${total_price:.2f}` USD\n"
+                f"💳 *User Wallet Balance:* `${user_balance:.2f}` USD\n\n"
+                "⚡ Purchase was blocked. User was told to contact Admin."
+            )
+            await context.bot.send_message(chat_id=ADMIN_ID, text=admin_alert, parse_mode=ParseMode.MARKDOWN)
+        except Exception as e:
+            logger.error(f"Error alerting admin on blocked user purchase: {e}")
+        return
+
     # Balance Check
     user_balance = await database.get_user_balance(user.id)
     if user_balance < total_price:
@@ -623,14 +653,15 @@ async def show_admin_panel(update_or_query, context: ContextTypes.DEFAULT_TYPE):
             InlineKeyboardButton("📜 All Deposits History", callback_data="admin_all_deposits"),
         ],
         [
-            InlineKeyboardButton("👥 Deposited Users & Balances", callback_data="admin_deposited_users"),
+            InlineKeyboardButton("👥 Deposited Users", callback_data="admin_deposited_users"),
+            InlineKeyboardButton("🚫 Blocked Buyers", callback_data="admin_blocked_buyers"),
+        ],
+        [
             InlineKeyboardButton("🔄 Sync Products", callback_data="admin_sync"),
-        ],
-        [
             InlineKeyboardButton("📢 Broadcast Message", callback_data="admin_broadcast"),
-            InlineKeyboardButton("💾 Download Backup", callback_data="admin_backup"),
         ],
         [
+            InlineKeyboardButton("💾 Download Backup", callback_data="admin_backup"),
             InlineKeyboardButton("🏠 Main Menu", callback_data="nav_main"),
         ],
     ]
@@ -693,16 +724,22 @@ async def handle_admin_user_detail_callback(query, context: ContextTypes.DEFAULT
     bal = float(u_info.get("balance", 0.0))
     orders = await database.get_user_orders(target_uid, limit=5)
     u_name = f"@{u_info['username']}" if u_info.get("username") else "N/A"
+    is_blocked = await database.is_user_buying_blocked(target_uid)
+    buying_status = "🔴 RESTRICTED (Cannot Buy)" if is_blocked else "🟢 ACTIVE (Allowed)"
 
     text = (
-        f"👤 *User Profile & Quick Balance Control*\n\n"
+        f"👤 *User Profile & Quick Controls*\n\n"
         f"🆔 *User ID:* `{target_uid}`\n"
         f"👤 *Name:* {u_info.get('first_name') or 'N/A'}\n"
         f"🌐 *Username:* {u_name}\n"
         f"💳 *Current Balance:* `${bal:.2f}` USD\n"
+        f"🛡️ *Buying Status:* `{buying_status}`\n"
         f"🛍️ *Total Orders:* `{len(orders)}`\n\n"
-        "⚡ _Use the 1-Tap Quick Action buttons below:_"
+        "⚡ _Use the Quick Action buttons below:_"
     )
+
+    block_btn_text = "🟢 Unblock Buying" if is_blocked else "🚫 Block Buying (Freeze)"
+    block_callback = f"admin_ubunblock_{target_uid}" if is_blocked else f"admin_ubblock_{target_uid}"
 
     buttons = [
         [
@@ -717,12 +754,43 @@ async def handle_admin_user_detail_callback(query, context: ContextTypes.DEFAULT
         ],
         [
             InlineKeyboardButton("✏️ Set Custom Amount", callback_data=f"admin_uset_{target_uid}"),
-            InlineKeyboardButton("👥 User List", callback_data="admin_list_users"),
+            InlineKeyboardButton(block_btn_text, callback_data=block_callback),
         ],
         [
+            InlineKeyboardButton("👥 User List", callback_data="admin_list_users"),
             InlineKeyboardButton("🔙 Balance Manager", callback_data="admin_manage_balance")
         ]
     ]
+    await query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(buttons))
+
+async def handle_admin_blocked_buyers_callback(query, context: ContextTypes.DEFAULT_TYPE):
+    blocked = await database.get_blocked_buyers()
+    text = (
+        "🚫 *Blocked Buyers / Restricted Users*\n\n"
+        "Users in this list CANNOT purchase any products from the bot. When they attempt to buy, their order is paused and they are told to contact Admin Support.\n\n"
+    )
+    buttons = []
+    for b in blocked:
+        u_id = b["user_id"]
+        u_name = f"@{b['username']}" if b.get("username") else (b.get("first_name") or f"User {u_id}")
+        bal = float(b.get("balance", 0.0))
+        text += (
+            f"👤 *{u_name}* (`{u_id}`)\n"
+            f"💳 Balance: `${bal:.2f}` USD | Blocked: `{str(b.get('blocked_at', ''))[:19]}`\n"
+            f"━━━━━━━━━━━━━━━━━━━\n"
+        )
+        buttons.append([
+            InlineKeyboardButton(f"🟢 Unblock {u_name}", callback_data=f"admin_ubunblock_{u_id}"),
+            InlineKeyboardButton(f"⚙️ Profile", callback_data=f"admin_usr_{u_id}")
+        ])
+
+    if not blocked:
+        text += "🟢 _No users are currently blocked from buying._\n\n"
+
+    buttons.append([
+        InlineKeyboardButton("➕ Block a User", callback_data="admin_prompt_block_buyer"),
+        InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin")
+    ])
     await query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(buttons))
 
 async def handle_admin_backup_callback(query, context: ContextTypes.DEFAULT_TYPE):
@@ -1517,6 +1585,27 @@ async def handle_admin_router(update: Update, context: ContextTypes.DEFAULT_TYPE
             f"✏️ *Set Exact Balance for User `{t_uid}`*\n\nSend the new exact balance in USD (e.g. `15.00`):",
             parse_mode=ParseMode.MARKDOWN,
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data=f"admin_usr_{t_uid}")]])
+        )
+    elif data.startswith("admin_ubblock_"):
+        t_uid = int(data.replace("admin_ubblock_", ""))
+        await database.block_user_buying(t_uid)
+        await query.answer("🚫 User purchasing BLOCKED!", show_alert=True)
+        await handle_admin_user_detail_callback(query, context, t_uid)
+    elif data.startswith("admin_ubunblock_"):
+        t_uid = int(data.replace("admin_ubunblock_", ""))
+        await database.unblock_user_buying(t_uid)
+        await query.answer("🟢 User purchasing UNBLOCKED!", show_alert=True)
+        await handle_admin_blocked_buyers_callback(query, context)
+    elif data == "admin_blocked_buyers":
+        await handle_admin_blocked_buyers_callback(query, context)
+    elif data == "admin_prompt_block_buyer":
+        context.user_data["waiting_for_admin_block_buyer"] = True
+        await query.edit_message_text(
+            "🚫 *Block User from Buying*\n\n"
+            "Send the **Username** (e.g. `@john_doe`) or **User ID** (e.g. `6201398546`) of the user you want to block:\n\n"
+            "_Note: The user can still deposit funds, but when attempting to buy, their order will be paused and they will be instructed to contact Admin support._",
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="admin_blocked_buyers")]])
         )
     elif data == "admin_addbalance":
         context.user_data["waiting_for_admin_addbalance"] = True
@@ -2674,7 +2763,101 @@ async def handle_user_text_input(update: Update, context: ContextTypes.DEFAULT_T
             )
         return
 
+    # ── Admin: Block User from Buying (Text Input) ──
+    if context.user_data.get("waiting_for_admin_block_buyer") and is_admin(user.id):
+        context.user_data["waiting_for_admin_block_buyer"] = False
+        target_uid = await database.get_user_id_by_identifier(text.strip())
+        if not target_uid:
+            await update.message.reply_text(
+                f"❌ User `{text.strip()}` not found in database. Make sure the user has started the bot.",
+                parse_mode=ParseMode.MARKDOWN,
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🚫 Blocked Buyers", callback_data="admin_blocked_buyers")]])
+            )
+            return
+
+        await database.block_user_buying(target_uid)
+        u_info = await database.get_user_info(target_uid)
+        u_label = f"@{u_info['username']}" if u_info.get("username") else (u_info.get("first_name") or f"ID {target_uid}")
+        bal = float(u_info.get("balance", 0.0))
+        await update.message.reply_text(
+            f"🚫 *User Buying Permissions Successfully BLOCKED!*\n\n"
+            f"👤 *User:* {u_label}\n"
+            f"🆔 *User ID:* `{target_uid}`\n"
+            f"💳 *Current Wallet Balance:* `${bal:.2f}` USD\n\n"
+            "🔒 *Status:* When this user deposits, balance will be added normally. BUT when they attempt to purchase any product, the order will be stopped and they will be instructed to contact Admin support.",
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton(f"⚙️ Manage {u_label}", callback_data=f"admin_usr_{target_uid}")],
+                [InlineKeyboardButton("🚫 Blocked Buyers List", callback_data="admin_blocked_buyers")],
+                [InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin")]
+            ])
+        )
+        return
+
 # --- ADDITIONAL COMMANDS ---
+
+async def blockbuying_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if not is_admin(user_id):
+        await update.message.reply_text("❌ Unauthorized.")
+        return
+
+    if not context.args:
+        await update.message.reply_text("⚠️ Usage: `/blockbuying <@username|user_id>` (e.g. `/blockbuying @MoBin_off1` or `/blockbuying 6201398546`)", parse_mode=ParseMode.MARKDOWN)
+        return
+
+    target_str = context.args[0].strip()
+    target_uid = await database.get_user_id_by_identifier(target_str)
+    if not target_uid:
+        await update.message.reply_text(f"❌ User `{target_str}` not found in database.", parse_mode=ParseMode.MARKDOWN)
+        return
+
+    await database.block_user_buying(target_uid)
+    u_info = await database.get_user_info(target_uid)
+    u_label = f"@{u_info['username']}" if u_info.get("username") else (u_info.get("first_name") or f"ID {target_uid}")
+    bal = float(u_info.get("balance", 0.0))
+    await update.message.reply_text(
+        f"🚫 *Buying Blocked for User {u_label}* (`{target_uid}`)\n\n"
+        f"💳 Current Balance: `${bal:.2f}` USD\n"
+        "🔒 User cannot buy any items now. Order will pause and direct user to Admin support.",
+        parse_mode=ParseMode.MARKDOWN,
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton(f"⚙️ Manage Profile", callback_data=f"admin_usr_{target_uid}")],
+            [InlineKeyboardButton("🚫 Blocked Buyers List", callback_data="admin_blocked_buyers")]
+        ])
+    )
+
+async def unblockbuying_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if not is_admin(user_id):
+        await update.message.reply_text("❌ Unauthorized.")
+        return
+
+    if not context.args:
+        await update.message.reply_text("⚠️ Usage: `/unblockbuying <@username|user_id>`", parse_mode=ParseMode.MARKDOWN)
+        return
+
+    target_str = context.args[0].strip()
+    target_uid = await database.get_user_id_by_identifier(target_str)
+    if not target_uid:
+        await update.message.reply_text(f"❌ User `{target_str}` not found in database.", parse_mode=ParseMode.MARKDOWN)
+        return
+
+    await database.unblock_user_buying(target_uid)
+    u_info = await database.get_user_info(target_uid)
+    u_label = f"@{u_info['username']}" if u_info.get("username") else (u_info.get("first_name") or f"ID {target_uid}")
+    await update.message.reply_text(
+        f"🟢 *Buying Restored for User {u_label}* (`{target_uid}`)\n\nUser can now purchase products normally.",
+        parse_mode=ParseMode.MARKDOWN,
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🚫 Blocked Buyers List", callback_data="admin_blocked_buyers")]])
+    )
+
+async def blockedusers_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if not is_admin(user_id):
+        await update.message.reply_text("❌ Unauthorized.")
+        return
+    await handle_admin_blocked_buyers_callback(update, context)
 
 async def setbinancekey_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -3212,9 +3395,11 @@ def main():
     app.add_handler(CommandHandler("deposits", deposits_command))
     app.add_handler(CommandHandler(["binancedeposits", "bdeposits"], binancedeposits_command))
     app.add_handler(CommandHandler(["binancebalance", "bbalance"], binancebalance_command))
-    app.add_handler(CommandHandler("balance", balance_command))
     app.add_handler(CommandHandler("stats", stats_command))
     app.add_handler(CommandHandler("broadcast", broadcast_command))
+    app.add_handler(CommandHandler(["blockbuying", "blockbuyer"], blockbuying_command))
+    app.add_handler(CommandHandler(["unblockbuying", "unblockbuyer"], unblockbuying_command))
+    app.add_handler(CommandHandler(["blockedusers", "blockedbuyers"], blockedusers_command))
 
     # Callbacks
     app.add_handler(CallbackQueryHandler(handle_navigation, pattern=r"^nav_"))

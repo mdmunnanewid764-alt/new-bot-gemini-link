@@ -129,6 +129,11 @@ async def init_db():
                         tx_hash TEXT,
                         created_at TEXT
                     );
+                    CREATE TABLE IF NOT EXISTS blocked_buyers (
+                        user_id BIGINT PRIMARY KEY,
+                        reason TEXT,
+                        blocked_at TEXT
+                    );
                 """)
                 logger.info("Supabase PostgreSQL tables initialized.")
                 return
@@ -192,6 +197,13 @@ async def init_db():
                 network TEXT,
                 tx_hash TEXT,
                 created_at TEXT
+            )
+        """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS blocked_buyers (
+                user_id INTEGER PRIMARY KEY,
+                reason TEXT,
+                blocked_at TEXT
             )
         """)
         for col, col_type in [("tx_hash", "TEXT"), ("network", "TEXT")]:
@@ -957,3 +969,95 @@ async def export_full_backup() -> tuple[str, str]:
         json.dump(backup_data, f, indent=2, ensure_ascii=False)
 
     return (latest_json_path, DB_PATH)
+
+async def block_user_buying(user_id: int, reason: str = "Admin Restricted") -> bool:
+    """Block a specific user from placing orders/buying products."""
+    now = datetime.utcnow().isoformat()
+    if USE_POSTGRES:
+        try:
+            pool = await get_pg_pool()
+            async with pool.acquire() as conn:
+                await conn.execute("""
+                    INSERT INTO blocked_buyers (user_id, reason, blocked_at)
+                    VALUES ($1, $2, $3)
+                    ON CONFLICT(user_id) DO UPDATE SET reason = EXCLUDED.reason, blocked_at = EXCLUDED.blocked_at
+                """, int(user_id), reason, now)
+                return True
+        except Exception as e:
+            logger.error(f"PG block_user_buying error: {e}")
+
+    import aiosqlite
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("""
+            INSERT INTO blocked_buyers (user_id, reason, blocked_at)
+            VALUES (?, ?, ?)
+            ON CONFLICT(user_id) DO UPDATE SET reason = excluded.reason, blocked_at = excluded.blocked_at
+        """, (int(user_id), reason, now))
+        await db.commit()
+    return True
+
+async def unblock_user_buying(user_id: int) -> bool:
+    """Unblock a user to restore their buying permissions."""
+    if USE_POSTGRES:
+        try:
+            pool = await get_pg_pool()
+            async with pool.acquire() as conn:
+                await conn.execute("DELETE FROM blocked_buyers WHERE user_id = $1", int(user_id))
+                return True
+        except Exception as e:
+            logger.error(f"PG unblock_user_buying error: {e}")
+
+    import aiosqlite
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("DELETE FROM blocked_buyers WHERE user_id = ?", (int(user_id),))
+        await db.commit()
+    return True
+
+async def is_user_buying_blocked(user_id: int) -> bool:
+    """Check if user has been blocked by Admin from making purchases."""
+    if USE_POSTGRES:
+        try:
+            pool = await get_pg_pool()
+            async with pool.acquire() as conn:
+                cnt = await conn.fetchval("SELECT COUNT(*) FROM blocked_buyers WHERE user_id = $1", int(user_id))
+                return bool(cnt and cnt > 0)
+        except Exception as e:
+            logger.error(f"PG is_user_buying_blocked error: {e}")
+
+    import aiosqlite
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute("SELECT COUNT(*) FROM blocked_buyers WHERE user_id = ?", (int(user_id),)) as cursor:
+            row = await cursor.fetchone()
+            return bool(row and row[0] > 0)
+    return False
+
+async def get_blocked_buyers() -> list[dict]:
+    """Get list of all users whose buying permissions are currently blocked."""
+    if USE_POSTGRES:
+        try:
+            pool = await get_pg_pool()
+            async with pool.acquire() as conn:
+                rows = await conn.fetch("""
+                    SELECT b.user_id, b.reason, b.blocked_at, u.username, u.first_name, COALESCE(ub.balance, 0.0) as balance
+                    FROM blocked_buyers b
+                    LEFT JOIN users u ON b.user_id = u.user_id
+                    LEFT JOIN user_balances ub ON b.user_id = ub.user_id
+                    ORDER BY b.blocked_at DESC
+                """)
+                return [dict(r) for r in rows]
+        except Exception as e:
+            logger.error(f"PG get_blocked_buyers error: {e}")
+
+    import aiosqlite
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute("""
+            SELECT b.user_id, b.reason, b.blocked_at, u.username, u.first_name, COALESCE(ub.balance, 0.0) as balance
+            FROM blocked_buyers b
+            LEFT JOIN users u ON b.user_id = u.user_id
+            LEFT JOIN user_balances ub ON b.user_id = ub.user_id
+            ORDER BY b.blocked_at DESC
+        """) as cursor:
+            rows = await cursor.fetchall()
+            return [dict(r) for r in rows]
+
