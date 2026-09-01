@@ -944,11 +944,13 @@ async def handle_admin_custom_products_callback(update_or_query, context: Contex
             f"💵 Price: `${price:.2f}` USD | 📊 In Stock: `{stock}` items\n"
             f"━━━━━━━━━━━━━━━━━━━\n"
         )
-        buttons.append([
+        row_btns = [
             InlineKeyboardButton(f"➕ Add Stock (#{c_id})", callback_data=f"admin_addstock_{c_id}"),
             InlineKeyboardButton(f"👁️ View Stock", callback_data=f"admin_viewstock_{c_id}"),
-            InlineKeyboardButton(f"🗑️ Delete", callback_data=f"admin_delcust_{c_id}"),
-        ])
+        ]
+        if is_super_admin(user_id):
+            row_btns.append(InlineKeyboardButton(f"🗑️ Delete", callback_data=f"admin_delcust_{c_id}"))
+        buttons.append(row_btns)
 
     if not prods:
         text += "_No in-house custom products added yet._\n\n"
@@ -1675,11 +1677,11 @@ async def handle_admin_router(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     data = query.data
 
-    # If user is Assistant (8934679152), restrict them STRICTLY to products & stock only
+    # If user is Assistant, restrict them STRICTLY to adding products & stock only
     if is_assistant(user_id) and not is_super_admin(user_id):
-        allowed_prefixes = ("admin_custom_prods", "admin_prompt_add_cust_prod", "admin_addstock_", "admin_viewstock_", "admin_delcust_")
+        allowed_prefixes = ("admin_custom_prods", "admin_prompt_add_cust_prod", "admin_addstock_", "admin_viewstock_")
         if not any(data.startswith(p) for p in allowed_prefixes) and data != "nav_main":
-            await query.answer("❌ Permission Denied: You are only authorized to add products and manage stock.", show_alert=True)
+            await query.answer("❌ Permission Denied: You are only authorized to add products and load stock. Deleting products is restricted to Super Admin.", show_alert=True)
             return
 
     if data == "admin_panel":
@@ -1966,6 +1968,9 @@ async def handle_admin_router(update: Update, context: ContextTypes.DEFAULT_TYPE
             ])
         )
     elif data.startswith("admin_delcust_"):
+        if not is_super_admin(user_id):
+            await query.answer("❌ Permission Denied: Only Super Admin can delete products.", show_alert=True)
+            return
         c_id = int(data.replace("admin_delcust_", ""))
         await database.delete_custom_product(c_id)
         await query.answer("Product deleted successfully!", show_alert=True)
