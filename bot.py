@@ -384,27 +384,26 @@ async def handle_buy_checkout(update: Update, context: ContextTypes.DEFAULT_TYPE
         await query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(buttons))
         return
 
-    # Deduct user balance
-    deducted = await database.deduct_user_balance(user.id, total_price)
-    if not deducted:
-        await query.edit_message_text("❌ Balance deduction failed.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="nav_products")]]))
-        return
+    # Process Purchase
+    if prod_id >= 90000:
+        # In-House Custom Admin Product
+        custom_id = prod_id - 90000
+        delivered_keys = await database.purchase_custom_product_stock(custom_id, user.id, qty)
+        if not delivered_keys:
+            await query.edit_message_text(
+                f"⚠️ *Out of Stock*\n\nSorry, `{prod_name}` does not have enough stock available right now.",
+                parse_mode=ParseMode.MARKDOWN,
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to Products", callback_data="nav_products")]])
+            )
+            return
 
-    idempotency_key = f"tg-{user.id}-{prod_id}-{int(time.time())}"
-    customer_label = f"@{user.username}" if user.username else f"TG:{user.id}"
+        deducted = await database.deduct_user_balance(user.id, total_price)
+        if not deducted:
+            await query.edit_message_text("❌ Balance deduction failed.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="nav_products")]]))
+            return
 
-    try:
-        order_res = await api_client.create_order(
-            product_id=prod_id,
-            quantity=qty,
-            idempotency_key=idempotency_key,
-            customer_name=customer_label
-        )
-
-        order_data = order_res.get("order", {})
-        delivered_keys = order_res.get("delivered_keys", [])
-        order_id = order_data.get("id", "N/A")
-        status = order_data.get("status", "delivered")
+        order_id = int(time.time())
+        status = "delivered"
 
         # Save order in local DB
         await database.record_order(
@@ -417,6 +416,41 @@ async def handle_buy_checkout(update: Update, context: ContextTypes.DEFAULT_TYPE
             status=status,
             delivered_keys=delivered_keys
         )
+    else:
+        # Synced Supplier API Product
+        # Deduct user balance
+        deducted = await database.deduct_user_balance(user.id, total_price)
+        if not deducted:
+            await query.edit_message_text("❌ Balance deduction failed.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="nav_products")]]))
+            return
+
+        idempotency_key = f"tg-{user.id}-{prod_id}-{int(time.time())}"
+        customer_label = f"@{user.username}" if user.username else f"TG:{user.id}"
+
+        try:
+            order_res = await api_client.create_order(
+                product_id=prod_id,
+                quantity=qty,
+                idempotency_key=idempotency_key,
+                customer_name=customer_label
+            )
+
+            order_data = order_res.get("order", {})
+            delivered_keys = order_res.get("delivered_keys", [])
+            order_id = order_data.get("id", "N/A")
+            status = order_data.get("status", "delivered")
+
+            # Save order in local DB
+            await database.record_order(
+                user_id=user.id,
+                order_id=order_id,
+                product_id=prod_id,
+                product_name=prod_name,
+                quantity=qty,
+                total=total_price,
+                status=status,
+                delivered_keys=delivered_keys
+            )
 
         # Get updated user balance
         new_balance = await database.get_user_balance(user.id)
@@ -638,10 +672,10 @@ async def show_admin_panel(update_or_query, context: ContextTypes.DEFAULT_TYPE):
         ],
         [
             InlineKeyboardButton("🔑 Shop API Key", callback_data="admin_key"),
-            InlineKeyboardButton("💎 Pricing & Profit", callback_data="admin_margins"),
+            InlineKeyboardButton("📦 In-House Products", callback_data="admin_custom_prods"),
         ],
         [
-            InlineKeyboardButton("📊 Sales Stats", callback_data="admin_stats"),
+            InlineKeyboardButton("💎 Pricing & Profit", callback_data="admin_margins"),
             InlineKeyboardButton(toggle_btn_text, callback_data="admin_toggle_catalog_filter"),
         ],
         [
@@ -789,6 +823,39 @@ async def handle_admin_blocked_buyers_callback(query, context: ContextTypes.DEFA
 
     buttons.append([
         InlineKeyboardButton("➕ Block a User", callback_data="admin_prompt_block_buyer"),
+        InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin")
+    ])
+    await query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(buttons))
+
+async def handle_admin_custom_products_callback(query, context: ContextTypes.DEFAULT_TYPE):
+    prods = await database.get_custom_products(only_active=False)
+    text = (
+        "📦 *In-House Custom Products & Stock Manager*\n\n"
+        "Here you can add your own custom products (e.g. Gmail:Password accounts, direct logins, private subscriptions) and load stock items line-by-line.\n\n"
+    )
+    buttons = []
+    for p in prods:
+        c_id = p["id"]
+        name = p["name"]
+        price = float(p["price"])
+        stock = int(p.get("stock_count", 0))
+        status_dot = "🟢" if p.get("is_active") == 1 else "🔴"
+        text += (
+            f"{status_dot} *ID `#{c_id}`:* {name}\n"
+            f"💵 Price: `${price:.2f}` USD | 📊 In Stock: `{stock}` items\n"
+            f"━━━━━━━━━━━━━━━━━━━\n"
+        )
+        buttons.append([
+            InlineKeyboardButton(f"➕ Add Stock (#{c_id})", callback_data=f"admin_addstock_{c_id}"),
+            InlineKeyboardButton(f"👁️ View Stock", callback_data=f"admin_viewstock_{c_id}"),
+            InlineKeyboardButton(f"🗑️ Delete", callback_data=f"admin_delcust_{c_id}"),
+        ])
+
+    if not prods:
+        text += "_No in-house custom products added yet._\n\n"
+
+    buttons.append([
+        InlineKeyboardButton("➕ Add New In-House Product", callback_data="admin_prompt_add_cust_prod"),
         InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin")
     ])
     await query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(buttons))
@@ -1607,6 +1674,59 @@ async def handle_admin_router(update: Update, context: ContextTypes.DEFAULT_TYPE
             parse_mode=ParseMode.MARKDOWN,
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="admin_blocked_buyers")]])
         )
+    elif data == "admin_custom_prods":
+        await handle_admin_custom_products_callback(query, context)
+    elif data == "admin_prompt_add_cust_prod":
+        context.user_data["waiting_for_admin_add_cust_prod"] = True
+        await query.edit_message_text(
+            "📦 *Add New In-House Product*\n\n"
+            "Send the Product Name and Price in this format:\n"
+            "`<Product Name> | <Price>`\n\n"
+            "Examples:\n"
+            "• `Gemini Direct Login (Gmail:Pass) | 2.50`\n"
+            "• `NordVPN 1 Year Account | 1.80`\n"
+            "• `Canva Pro Invite Link | 0.99`",
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="admin_custom_prods")]])
+        )
+    elif data.startswith("admin_addstock_"):
+        c_id = int(data.replace("admin_addstock_", ""))
+        prod = await database.get_custom_product(c_id)
+        prod_name = prod.get("name") if prod else f"Product #{c_id}"
+        context.user_data["admin_addstock_target_cid"] = c_id
+        context.user_data["waiting_for_admin_add_cust_stock"] = True
+        await query.edit_message_text(
+            f"➕ *Add Stock for `{prod_name}`* (ID `#{c_id}`)\n\n"
+            "Send your stock accounts/credentials/keys line-by-line (one per line):\n\n"
+            "Example:\n"
+            "`user1@gmail.com:pass1234`\n"
+            "`user2@gmail.com:pass5678`\n"
+            "`user3@gmail.com:pass9012`",
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="admin_custom_prods")]])
+        )
+    elif data.startswith("admin_viewstock_"):
+        c_id = int(data.replace("admin_viewstock_", ""))
+        prod = await database.get_custom_product(c_id)
+        prod_name = prod.get("name") if prod else f"Product #{c_id}"
+        preview = await database.get_custom_product_available_preview(c_id, limit=5)
+        stock_cnt = prod.get("stock_count", 0) if prod else 0
+        stock_text = "\n".join([f"`{s}`" for s in preview]) if preview else "_No stock items loaded._"
+        await query.edit_message_text(
+            f"👁️ *Stock Preview for `{prod_name}`*\n\n"
+            f"📊 *Total Available:* `{stock_cnt}` items\n\n"
+            f"*Sample Next Items to be Delivered:*\n{stock_text}",
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("➕ Add More Stock", callback_data=f"admin_addstock_{c_id}")],
+                [InlineKeyboardButton("🔙 Custom Products", callback_data="admin_custom_prods")]
+            ])
+        )
+    elif data.startswith("admin_delcust_"):
+        c_id = int(data.replace("admin_delcust_", ""))
+        await database.delete_custom_product(c_id)
+        await query.answer("Product deleted successfully!", show_alert=True)
+        await handle_admin_custom_products_callback(query, context)
     elif data == "admin_addbalance":
         context.user_data["waiting_for_admin_addbalance"] = True
         await query.edit_message_text(
@@ -2794,7 +2914,107 @@ async def handle_user_text_input(update: Update, context: ContextTypes.DEFAULT_T
         )
         return
 
+    # ── Admin: Add In-House Custom Product (Text Input) ──
+    if context.user_data.get("waiting_for_admin_add_cust_prod") and is_admin(user.id):
+        context.user_data["waiting_for_admin_add_cust_prod"] = False
+        parts = text.split("|")
+        if len(parts) < 2:
+            await update.message.reply_text(
+                "❌ Format: `<Product Name> | <Price>`\n\nExample: `Gemini Direct Login | 2.50`",
+                parse_mode=ParseMode.MARKDOWN,
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Custom Products", callback_data="admin_custom_prods")]])
+            )
+            return
+
+        name = parts[0].strip()
+        try:
+            price = float(parts[1].strip())
+        except ValueError:
+            await update.message.reply_text(
+                "❌ Invalid price format. Please enter a valid dollar amount (e.g. `2.50`).",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Custom Products", callback_data="admin_custom_prods")]])
+            )
+            return
+
+        prod_id = await database.add_custom_product(name=name, price=price)
+        await update.message.reply_text(
+            f"✅ *In-House Product Created Successfully!*\n\n"
+            f"🆔 *Product ID:* `#{prod_id}`\n"
+            f"📦 *Name:* {name}\n"
+            f"💵 *Price:* `${price:.2f}` USD\n"
+            f"📊 *Stock:* `0` (Tap **Add Stock** below to load accounts/keys)",
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("➕ Add Stock Now", callback_data=f"admin_addstock_{prod_id}")],
+                [InlineKeyboardButton("📦 Custom Products", callback_data="admin_custom_prods")],
+                [InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin")]
+            ])
+        )
+        return
+
+    # ── Admin: Add Stock to Custom Product (Text Input) ──
+    if context.user_data.get("waiting_for_admin_add_cust_stock") and is_admin(user.id):
+        context.user_data["waiting_for_admin_add_cust_stock"] = False
+        c_id = context.user_data.pop("admin_addstock_target_cid", None)
+        if not c_id:
+            await update.message.reply_text("❌ Session expired. Please select product again from Custom Products menu.")
+            return
+
+        stock_lines = [l.strip() for l in text.split("\n") if l.strip()]
+        added_count = await database.add_custom_product_stock(c_id, stock_lines)
+        prod = await database.get_custom_product(c_id)
+        prod_name = prod.get("name") if prod else f"Product #{c_id}"
+        total_stock = prod.get("stock_count", added_count) if prod else added_count
+
+        await update.message.reply_text(
+            f"🎉 *Stock Added Successfully!*\n\n"
+            f"📦 *Product:* {prod_name} (ID `#{c_id}`)\n"
+            f"➕ *Added Items:* `{added_count}` accounts/keys\n"
+            f"📊 *Total In Stock:* `{total_stock}` available\n\n"
+            "Customers can now purchase this product from the shop instantly!",
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("👁️ Preview Stock", callback_data=f"admin_viewstock_{c_id}")],
+                [InlineKeyboardButton("➕ Add More Stock", callback_data=f"admin_addstock_{c_id}")],
+                [InlineKeyboardButton("📦 Custom Products", callback_data="admin_custom_prods")]
+            ])
+        )
+        return
+
 # --- ADDITIONAL COMMANDS ---
+
+async def addproduct_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if not is_admin(user_id):
+        await update.message.reply_text("❌ Unauthorized.")
+        return
+
+    full_arg = " ".join(context.args).strip()
+    if not full_arg or "|" not in full_arg:
+        await update.message.reply_text("⚠️ Usage: `/addproduct <Product Name> | <Price>` (e.g. `/addproduct Gemini Direct Login | 2.50`)", parse_mode=ParseMode.MARKDOWN)
+        return
+
+    parts = full_arg.split("|")
+    name = parts[0].strip()
+    try:
+        price = float(parts[1].strip())
+    except ValueError:
+        await update.message.reply_text("❌ Invalid price format.")
+        return
+
+    prod_id = await database.add_custom_product(name=name, price=price)
+    await update.message.reply_text(
+        f"✅ *In-House Product Created!*\n\n🆔 *Product ID:* `#{prod_id}`\n📦 *Name:* {name}\n💵 *Price:* `${price:.2f}` USD",
+        parse_mode=ParseMode.MARKDOWN,
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("➕ Add Stock", callback_data=f"admin_addstock_{prod_id}")]])
+    )
+
+async def customproducts_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if not is_admin(user_id):
+        await update.message.reply_text("❌ Unauthorized.")
+        return
+    await handle_admin_custom_products_callback(update, context)
 
 async def blockbuying_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -3400,6 +3620,8 @@ def main():
     app.add_handler(CommandHandler(["blockbuying", "blockbuyer"], blockbuying_command))
     app.add_handler(CommandHandler(["unblockbuying", "unblockbuyer"], unblockbuying_command))
     app.add_handler(CommandHandler(["blockedusers", "blockedbuyers"], blockedusers_command))
+    app.add_handler(CommandHandler("addproduct", addproduct_command))
+    app.add_handler(CommandHandler(["customproducts", "inhouseproducts"], customproducts_command))
 
     # Callbacks
     app.add_handler(CallbackQueryHandler(handle_navigation, pattern=r"^nav_"))

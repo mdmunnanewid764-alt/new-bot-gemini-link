@@ -134,6 +134,23 @@ async def init_db():
                         reason TEXT,
                         blocked_at TEXT
                     );
+                    CREATE TABLE IF NOT EXISTS custom_products (
+                        id SERIAL PRIMARY KEY,
+                        name TEXT NOT NULL,
+                        price DOUBLE PRECISION NOT NULL,
+                        description TEXT,
+                        is_active INTEGER DEFAULT 1,
+                        created_at TEXT
+                    );
+                    CREATE TABLE IF NOT EXISTS custom_product_stocks (
+                        id SERIAL PRIMARY KEY,
+                        product_id INTEGER NOT NULL,
+                        stock_data TEXT NOT NULL,
+                        is_sold INTEGER DEFAULT 0,
+                        sold_to_user_id BIGINT,
+                        sold_at TEXT,
+                        created_at TEXT
+                    );
                 """)
                 logger.info("Supabase PostgreSQL tables initialized.")
                 return
@@ -204,6 +221,27 @@ async def init_db():
                 user_id INTEGER PRIMARY KEY,
                 reason TEXT,
                 blocked_at TEXT
+            )
+        """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS custom_products (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                price REAL NOT NULL,
+                description TEXT,
+                is_active INTEGER DEFAULT 1,
+                created_at TEXT
+            )
+        """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS custom_product_stocks (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                product_id INTEGER NOT NULL,
+                stock_data TEXT NOT NULL,
+                is_sold INTEGER DEFAULT 0,
+                sold_to_user_id INTEGER,
+                sold_at TEXT,
+                created_at TEXT
             )
         """)
         for col, col_type in [("tx_hash", "TEXT"), ("network", "TEXT")]:
@@ -1060,4 +1098,228 @@ async def get_blocked_buyers() -> list[dict]:
         """) as cursor:
             rows = await cursor.fetchall()
             return [dict(r) for r in rows]
+
+# ── CUSTOM IN-HOUSE PRODUCTS & STOCK MANAGEMENT ──
+
+async def add_custom_product(name: str, price: float, description: str = "") -> int:
+    """Create a new in-house custom product (e.g. Gmail:Pass, Accounts, Keys)."""
+    now = datetime.utcnow().isoformat()
+    if USE_POSTGRES:
+        try:
+            pool = await get_pg_pool()
+            async with pool.acquire() as conn:
+                prod_id = await conn.fetchval("""
+                    INSERT INTO custom_products (name, price, description, is_active, created_at)
+                    VALUES ($1, $2, $3, 1, $4)
+                    RETURNING id
+                """, name.strip(), float(price), description.strip(), now)
+                return int(prod_id)
+        except Exception as e:
+            logger.error(f"PG add_custom_product error: {e}")
+
+    import aiosqlite
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute("""
+            INSERT INTO custom_products (name, price, description, is_active, created_at)
+            VALUES (?, ?, ?, 1, ?)
+        """, (name.strip(), float(price), description.strip(), now))
+        await db.commit()
+        return cursor.lastrowid
+
+async def get_custom_products(only_active: bool = True) -> list[dict]:
+    """Retrieve all in-house products with live available stock count."""
+    rows = []
+    if USE_POSTGRES:
+        try:
+            pool = await get_pg_pool()
+            async with pool.acquire() as conn:
+                query = """
+                    SELECT p.id, p.name, p.price, p.description, p.is_active, p.created_at,
+                           COALESCE(COUNT(s.id) FILTER (WHERE s.is_sold = 0), 0) as stock_count
+                    FROM custom_products p
+                    LEFT JOIN custom_product_stocks s ON p.id = s.product_id
+                """
+                if only_active:
+                    query += " WHERE p.is_active = 1"
+                query += " GROUP BY p.id ORDER BY p.id ASC"
+                res = await conn.fetch(query)
+                rows = [dict(r) for r in res]
+        except Exception as e:
+            logger.error(f"PG get_custom_products error: {e}")
+    else:
+        import aiosqlite
+        async with aiosqlite.connect(DB_PATH) as db:
+            db.row_factory = aiosqlite.Row
+            query = """
+                SELECT p.id, p.name, p.price, p.description, p.is_active, p.created_at,
+                       COALESCE(SUM(CASE WHEN s.is_sold = 0 THEN 1 ELSE 0 END), 0) as stock_count
+                FROM custom_products p
+                LEFT JOIN custom_product_stocks s ON p.id = s.product_id
+            """
+            if only_active:
+                query += " WHERE p.is_active = 1"
+            query += " GROUP BY p.id ORDER BY p.id ASC"
+            async with db.execute(query) as cursor:
+                res = await cursor.fetchall()
+                rows = [dict(r) for r in res]
+    return rows
+
+async def get_custom_product(product_id: int) -> Optional[dict]:
+    """Retrieve single custom product with live stock count."""
+    if USE_POSTGRES:
+        try:
+            pool = await get_pg_pool()
+            async with pool.acquire() as conn:
+                r = await conn.fetchrow("""
+                    SELECT p.id, p.name, p.price, p.description, p.is_active, p.created_at,
+                           COALESCE(COUNT(s.id) FILTER (WHERE s.is_sold = 0), 0) as stock_count
+                    FROM custom_products p
+                    LEFT JOIN custom_product_stocks s ON p.id = s.product_id
+                    WHERE p.id = $1
+                    GROUP BY p.id
+                """, int(product_id))
+                return dict(r) if r else None
+        except Exception as e:
+            logger.error(f"PG get_custom_product error: {e}")
+
+    import aiosqlite
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute("""
+            SELECT p.id, p.name, p.price, p.description, p.is_active, p.created_at,
+                   COALESCE(SUM(CASE WHEN s.is_sold = 0 THEN 1 ELSE 0 END), 0) as stock_count
+            FROM custom_products p
+            LEFT JOIN custom_product_stocks s ON p.id = s.product_id
+            WHERE p.id = ?
+            GROUP BY p.id
+        """, (int(product_id),)) as cursor:
+            r = await cursor.fetchone()
+            return dict(r) if r else None
+
+async def delete_custom_product(product_id: int) -> bool:
+    """Delete or deactivate a custom product."""
+    if USE_POSTGRES:
+        try:
+            pool = await get_pg_pool()
+            async with pool.acquire() as conn:
+                await conn.execute("DELETE FROM custom_products WHERE id = $1", int(product_id))
+                await conn.execute("DELETE FROM custom_product_stocks WHERE product_id = $1 AND is_sold = 0", int(product_id))
+                return True
+        except Exception as e:
+            logger.error(f"PG delete_custom_product error: {e}")
+
+    import aiosqlite
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("DELETE FROM custom_products WHERE id = ?", (int(product_id),))
+        await db.execute("DELETE FROM custom_product_stocks WHERE product_id = ? AND is_sold = 0", (int(product_id),))
+        await db.commit()
+    return True
+
+async def add_custom_product_stock(product_id: int, stock_lines: list[str]) -> int:
+    """Add new stock items (e.g. email:pass, credentials, keys) to custom product."""
+    now = datetime.utcnow().isoformat()
+    clean_lines = [line.strip() for line in stock_lines if line and line.strip()]
+    if not clean_lines:
+        return 0
+
+    if USE_POSTGRES:
+        try:
+            pool = await get_pg_pool()
+            async with pool.acquire() as conn:
+                for line in clean_lines:
+                    await conn.execute("""
+                        INSERT INTO custom_product_stocks (product_id, stock_data, is_sold, created_at)
+                        VALUES ($1, $2, 0, $3)
+                    """, int(product_id), line, now)
+                return len(clean_lines)
+        except Exception as e:
+            logger.error(f"PG add_custom_product_stock error: {e}")
+
+    import aiosqlite
+    async with aiosqlite.connect(DB_PATH) as db:
+        for line in clean_lines:
+            await db.execute("""
+                INSERT INTO custom_product_stocks (product_id, stock_data, is_sold, created_at)
+                VALUES (?, ?, 0, ?)
+            """, (int(product_id), line, now))
+        await db.commit()
+    return len(clean_lines)
+
+async def get_custom_product_available_preview(product_id: int, limit: int = 10) -> list[str]:
+    """View sample available stock items for Admin inspection."""
+    if USE_POSTGRES:
+        try:
+            pool = await get_pg_pool()
+            async with pool.acquire() as conn:
+                rows = await conn.fetch("""
+                    SELECT stock_data FROM custom_product_stocks
+                    WHERE product_id = $1 AND is_sold = 0
+                    ORDER BY id ASC LIMIT $2
+                """, int(product_id), limit)
+                return [r["stock_data"] for r in rows]
+        except Exception as e:
+            logger.error(f"PG get_custom_product_available_preview error: {e}")
+
+    import aiosqlite
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute("""
+            SELECT stock_data FROM custom_product_stocks
+            WHERE product_id = ? AND is_sold = 0
+            ORDER BY id ASC LIMIT ?
+        """, (int(product_id), limit)) as cursor:
+            rows = await cursor.fetchall()
+            return [r[0] for r in rows]
+
+async def purchase_custom_product_stock(product_id: int, user_id: int, quantity: int) -> list[str]:
+    """Atomically pop and reserve unsold stock items for customer delivery."""
+    now = datetime.utcnow().isoformat()
+    delivered = []
+    if USE_POSTGRES:
+        try:
+            pool = await get_pg_pool()
+            async with pool.acquire() as conn:
+                async with conn.transaction():
+                    rows = await conn.fetch("""
+                        SELECT id, stock_data FROM custom_product_stocks
+                        WHERE product_id = $1 AND is_sold = 0
+                        ORDER BY id ASC LIMIT $2
+                        FOR UPDATE
+                    """, int(product_id), int(quantity))
+                    if len(rows) < quantity:
+                        return []
+                    ids = [r["id"] for r in rows]
+                    delivered = [r["stock_data"] for r in rows]
+                    await conn.execute("""
+                        UPDATE custom_product_stocks
+                        SET is_sold = 1, sold_to_user_id = $1, sold_at = $2
+                        WHERE id = ANY($3)
+                    """, int(user_id), now, ids)
+                    return delivered
+        except Exception as e:
+            logger.error(f"PG purchase_custom_product_stock error: {e}")
+            return []
+
+    import aiosqlite
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute("""
+            SELECT id, stock_data FROM custom_product_stocks
+            WHERE product_id = ? AND is_sold = 0
+            ORDER BY id ASC LIMIT ?
+        """, (int(product_id), int(quantity))) as cursor:
+            rows = await cursor.fetchall()
+            if len(rows) < quantity:
+                return []
+            ids = [r["id"] for r in rows]
+            delivered = [r["stock_data"] for r in rows]
+
+        placeholders = ",".join("?" * len(ids))
+        await db.execute(f"""
+            UPDATE custom_product_stocks
+            SET is_sold = 1, sold_to_user_id = ?, sold_at = ?
+            WHERE id IN ({placeholders})
+        """, [int(user_id), now] + ids)
+        await db.commit()
+    return delivered
+
 

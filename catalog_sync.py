@@ -368,7 +368,32 @@ async def get_local_catalog(filter_gemini: Optional[bool] = None) -> List[Dict[s
         p_dict["sell_price"] = round(supplier_price + margin, 2)
         p_dict["margin"] = margin
         p_dict["supplier_price"] = supplier_price
+        p_dict["is_custom"] = False
         products.append(p_dict)
+
+    # Seamlessly merge Admin In-House Custom Products (Gmail:Pass, Accounts, etc.)
+    try:
+        custom_prods = await database.get_custom_products(only_active=True)
+        for cp in custom_prods:
+            stock_cnt = int(cp.get("stock_count", 0))
+            if stock_cnt > 0:
+                c_id = int(cp["id"])
+                mapped_id = 90000 + c_id
+                products.append({
+                    "id": mapped_id,
+                    "product_id": mapped_id,
+                    "name": cp["name"],
+                    "sell_price": float(cp["price"]),
+                    "supplier_price": float(cp["price"]),
+                    "margin": 0.0,
+                    "stock_count": stock_cnt,
+                    "in_stock": 1,
+                    "is_custom": True,
+                    "custom_id": c_id
+                })
+    except Exception as e:
+        logger.error(f"Error merging custom products in catalog: {e}")
+
     return products
 
 async def get_gemini_products() -> List[Dict[str, Any]]:
@@ -415,7 +440,26 @@ async def get_gemini_products() -> List[Dict[str, Any]]:
     return products
 
 async def get_local_product(product_id: int) -> Optional[Dict[str, Any]]:
-    """Retrieve a single product from synced DB with margin applied."""
+    """Retrieve a single product from synced DB or Custom Admin Products with margin applied."""
+    if int(product_id) >= 90000:
+        c_id = int(product_id) - 90000
+        cp = await database.get_custom_product(c_id)
+        if not cp:
+            return None
+        stock_cnt = int(cp.get("stock_count", 0))
+        return {
+            "id": int(product_id),
+            "product_id": int(product_id),
+            "name": cp["name"],
+            "sell_price": float(cp["price"]),
+            "supplier_price": float(cp["price"]),
+            "margin": 0.0,
+            "stock_count": stock_cnt,
+            "in_stock": 1 if stock_cnt > 0 else 0,
+            "is_custom": True,
+            "custom_id": c_id
+        }
+
     margins = await database.get_all_margins()
     default_margin = margins.get("default", 0.20)
     p_id_str = str(product_id)
