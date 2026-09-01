@@ -146,6 +146,7 @@ async def init_db():
                         price DOUBLE PRECISION NOT NULL,
                         description TEXT,
                         is_active INTEGER DEFAULT 1,
+                        created_by BIGINT,
                         created_at TEXT
                     );
                     CREATE TABLE IF NOT EXISTS custom_product_stocks (
@@ -155,9 +156,15 @@ async def init_db():
                         is_sold INTEGER DEFAULT 0,
                         sold_to_user_id BIGINT,
                         sold_at TEXT,
+                        added_by BIGINT,
                         created_at TEXT
                     );
                 """)
+                for col_tbl in [("custom_products", "created_by", "BIGINT"), ("custom_product_stocks", "added_by", "BIGINT")]:
+                    try:
+                        await conn.execute(f"ALTER TABLE {col_tbl[0]} ADD COLUMN IF NOT EXISTS {col_tbl[1]} {col_tbl[2]}")
+                    except Exception:
+                        pass
                 logger.info("Supabase PostgreSQL tables initialized.")
                 return
         except Exception as e:
@@ -261,6 +268,11 @@ async def init_db():
         for col, col_type in [("tx_hash", "TEXT"), ("network", "TEXT")]:
             try:
                 await db.execute(f"ALTER TABLE deposits ADD COLUMN {col} {col_type}")
+            except Exception:
+                pass
+        for col_tbl in [("custom_products", "created_by", "INTEGER"), ("custom_product_stocks", "added_by", "INTEGER")]:
+            try:
+                await db.execute(f"ALTER TABLE {col_tbl[0]} ADD COLUMN {col_tbl[1]} {col_tbl[2]}")
             except Exception:
                 pass
         await db.commit()
@@ -1115,18 +1127,18 @@ async def get_blocked_buyers() -> list[dict]:
 
 # ── CUSTOM IN-HOUSE PRODUCTS & STOCK MANAGEMENT ──
 
-async def add_custom_product(name: str, price: float, description: str = "") -> int:
-    """Create a new in-house custom product (e.g. Gmail:Pass, Accounts, Keys)."""
+async def add_custom_product(name: str, price: float, description: str = "", created_by: int = None) -> int:
+    """Create a new custom product with its pricing and creator user_id."""
     now = datetime.utcnow().isoformat()
     if USE_POSTGRES:
         try:
             pool = await get_pg_pool()
             async with pool.acquire() as conn:
                 prod_id = await conn.fetchval("""
-                    INSERT INTO custom_products (name, price, description, is_active, created_at)
-                    VALUES ($1, $2, $3, 1, $4)
+                    INSERT INTO custom_products (name, price, description, is_active, created_by, created_at)
+                    VALUES ($1, $2, $3, 1, $4, $5)
                     RETURNING id
-                """, name.strip(), float(price), description.strip(), now)
+                """, name.strip(), float(price), description.strip(), created_by, now)
                 return int(prod_id)
         except Exception as e:
             logger.error(f"PG add_custom_product error: {e}")
@@ -1134,29 +1146,36 @@ async def add_custom_product(name: str, price: float, description: str = "") -> 
     import aiosqlite
     async with aiosqlite.connect(DB_PATH) as db:
         cursor = await db.execute("""
-            INSERT INTO custom_products (name, price, description, is_active, created_at)
-            VALUES (?, ?, ?, 1, ?)
-        """, (name.strip(), float(price), description.strip(), now))
+            INSERT INTO custom_products (name, price, description, is_active, created_by, created_at)
+            VALUES (?, ?, ?, 1, ?, ?)
+        """, (name.strip(), float(price), description.strip(), created_by, now))
         await db.commit()
         return cursor.lastrowid
 
-async def get_custom_products(only_active: bool = True) -> list[dict]:
-    """Retrieve all in-house products with live available stock count."""
+async def get_custom_products(only_active: bool = True, created_by: int = None) -> list[dict]:
+    """Retrieve in-house products with live available stock count. If created_by is given, filters to that creator."""
     rows = []
     if USE_POSTGRES:
         try:
             pool = await get_pg_pool()
             async with pool.acquire() as conn:
                 query = """
-                    SELECT p.id, p.name, p.price, p.description, p.is_active, p.created_at,
+                    SELECT p.id, p.name, p.price, p.description, p.is_active, p.created_by, p.created_at,
                            COALESCE(COUNT(s.id) FILTER (WHERE s.is_sold = 0), 0) as stock_count
                     FROM custom_products p
                     LEFT JOIN custom_product_stocks s ON p.id = s.product_id
                 """
+                params = []
+                where_clauses = []
                 if only_active:
-                    query += " WHERE p.is_active = 1"
+                    where_clauses.append("p.is_active = 1")
+                if created_by is not None:
+                    params.append(int(created_by))
+                    where_clauses.append(f"p.created_by = ${len(params)}")
+                if where_clauses:
+                    query += " WHERE " + " AND ".join(where_clauses)
                 query += " GROUP BY p.id ORDER BY p.id ASC"
-                res = await conn.fetch(query)
+                res = await conn.fetch(query, *params)
                 rows = [dict(r) for r in res]
         except Exception as e:
             logger.error(f"PG get_custom_products error: {e}")
@@ -1165,27 +1184,34 @@ async def get_custom_products(only_active: bool = True) -> list[dict]:
         async with aiosqlite.connect(DB_PATH) as db:
             db.row_factory = aiosqlite.Row
             query = """
-                SELECT p.id, p.name, p.price, p.description, p.is_active, p.created_at,
+                SELECT p.id, p.name, p.price, p.description, p.is_active, p.created_by, p.created_at,
                        COALESCE(SUM(CASE WHEN s.is_sold = 0 THEN 1 ELSE 0 END), 0) as stock_count
                 FROM custom_products p
                 LEFT JOIN custom_product_stocks s ON p.id = s.product_id
             """
+            params = []
+            where_clauses = []
             if only_active:
-                query += " WHERE p.is_active = 1"
+                where_clauses.append("p.is_active = 1")
+            if created_by is not None:
+                params.append(int(created_by))
+                where_clauses.append("p.created_by = ?")
+            if where_clauses:
+                query += " WHERE " + " AND ".join(where_clauses)
             query += " GROUP BY p.id ORDER BY p.id ASC"
-            async with db.execute(query) as cursor:
+            async with db.execute(query, tuple(params)) as cursor:
                 res = await cursor.fetchall()
                 rows = [dict(r) for r in res]
     return rows
 
 async def get_custom_product(product_id: int) -> Optional[dict]:
-    """Retrieve single custom product with live stock count."""
+    """Retrieve single custom product with live stock count and created_by."""
     if USE_POSTGRES:
         try:
             pool = await get_pg_pool()
             async with pool.acquire() as conn:
                 r = await conn.fetchrow("""
-                    SELECT p.id, p.name, p.price, p.description, p.is_active, p.created_at,
+                    SELECT p.id, p.name, p.price, p.description, p.is_active, p.created_by, p.created_at,
                            COALESCE(COUNT(s.id) FILTER (WHERE s.is_sold = 0), 0) as stock_count
                     FROM custom_products p
                     LEFT JOIN custom_product_stocks s ON p.id = s.product_id
@@ -1200,7 +1226,7 @@ async def get_custom_product(product_id: int) -> Optional[dict]:
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         async with db.execute("""
-            SELECT p.id, p.name, p.price, p.description, p.is_active, p.created_at,
+            SELECT p.id, p.name, p.price, p.description, p.is_active, p.created_by, p.created_at,
                    COALESCE(SUM(CASE WHEN s.is_sold = 0 THEN 1 ELSE 0 END), 0) as stock_count
             FROM custom_products p
             LEFT JOIN custom_product_stocks s ON p.id = s.product_id
@@ -1229,7 +1255,7 @@ async def delete_custom_product(product_id: int) -> bool:
         await db.commit()
     return True
 
-async def add_custom_product_stock(product_id: int, stock_lines: list[str]) -> int:
+async def add_custom_product_stock(product_id: int, stock_lines: list[str], added_by: int = None) -> int:
     """Add new stock items (e.g. email:pass, credentials, keys) to custom product."""
     now = datetime.utcnow().isoformat()
     clean_lines = [line.strip() for line in stock_lines if line and line.strip()]
@@ -1242,9 +1268,9 @@ async def add_custom_product_stock(product_id: int, stock_lines: list[str]) -> i
             async with pool.acquire() as conn:
                 for line in clean_lines:
                     await conn.execute("""
-                        INSERT INTO custom_product_stocks (product_id, stock_data, is_sold, created_at)
-                        VALUES ($1, $2, 0, $3)
-                    """, int(product_id), line, now)
+                        INSERT INTO custom_product_stocks (product_id, stock_data, is_sold, added_by, created_at)
+                        VALUES ($1, $2, 0, $3, $4)
+                    """, int(product_id), line, added_by, now)
                 return len(clean_lines)
         except Exception as e:
             logger.error(f"PG add_custom_product_stock error: {e}")
@@ -1253,9 +1279,9 @@ async def add_custom_product_stock(product_id: int, stock_lines: list[str]) -> i
     async with aiosqlite.connect(DB_PATH) as db:
         for line in clean_lines:
             await db.execute("""
-                INSERT INTO custom_product_stocks (product_id, stock_data, is_sold, created_at)
-                VALUES (?, ?, 0, ?)
-            """, (int(product_id), line, now))
+                INSERT INTO custom_product_stocks (product_id, stock_data, is_sold, added_by, created_at)
+                VALUES (?, ?, 0, ?, ?)
+            """, (int(product_id), line, added_by, now))
         await db.commit()
     return len(clean_lines)
 

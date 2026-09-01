@@ -927,10 +927,14 @@ async def handle_admin_blocked_buyers_callback(query, context: ContextTypes.DEFA
 
 async def handle_admin_custom_products_callback(update_or_query, context: ContextTypes.DEFAULT_TYPE):
     user_id = update_or_query.from_user.id if hasattr(update_or_query, "from_user") else update_or_query.effective_user.id
-    prods = await database.get_custom_products(only_active=False)
+    # Isolation: Super Admin sees all products; Assistants see ONLY products they created
+    creator_filter = None if is_super_admin(user_id) else user_id
+    prods = await database.get_custom_products(only_active=False, created_by=creator_filter)
+
+    role_title = "👑 Super Admin" if is_super_admin(user_id) else "👨‍💼 Assistant Stock Manager"
     text = (
-        "📦 *In-House Custom Products & Stock Manager*\n\n"
-        "Here you can add your own custom products (e.g. Gmail:Password accounts, direct logins, private subscriptions) and load stock items line-by-line.\n\n"
+        f"📦 *In-House Custom Products & Stock Manager* ({role_title})\n\n"
+        "🔒 *Privacy Protection:* Each assistant can only see, preview, and load stock for their own created products.\n\n"
     )
     buttons = []
     for p in prods:
@@ -939,9 +943,13 @@ async def handle_admin_custom_products_callback(update_or_query, context: Contex
         price = float(p["price"])
         stock = int(p.get("stock_count", 0))
         status_dot = "🟢" if p.get("is_active") == 1 else "🔴"
+        creator_tag = ""
+        if is_super_admin(user_id) and p.get("created_by"):
+            creator_tag = f" | 👤 Manager: `{p['created_by']}`"
+
         text += (
             f"{status_dot} *ID `#{c_id}`:* {name}\n"
-            f"💵 Price: `${price:.2f}` USD | 📊 In Stock: `{stock}` items\n"
+            f"💵 Price: `${price:.2f}` USD | 📊 In Stock: `{stock}` items{creator_tag}\n"
             f"━━━━━━━━━━━━━━━━━━━\n"
         )
         row_btns = [
@@ -953,7 +961,7 @@ async def handle_admin_custom_products_callback(update_or_query, context: Contex
         buttons.append(row_btns)
 
     if not prods:
-        text += "_No in-house custom products added yet._\n\n"
+        text += "_No in-house products found for your account._\n\n"
 
     nav_back = InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin") if is_super_admin(user_id) else InlineKeyboardButton("🏠 Main Menu", callback_data="nav_main")
     buttons.append([
@@ -1921,6 +1929,13 @@ async def handle_admin_router(update: Update, context: ContextTypes.DEFAULT_TYPE
     elif data.startswith("admin_addstock_"):
         c_id = int(data.replace("admin_addstock_", ""))
         prod = await database.get_custom_product(c_id)
+        if not prod:
+            await query.answer("❌ Product not found.", show_alert=True)
+            return
+        if not is_super_admin(user_id) and prod.get("created_by") and int(prod["created_by"]) != int(user_id):
+            await query.answer("❌ Permission Denied: You can only manage stock for products created by you.", show_alert=True)
+            return
+
         prod_name = prod.get("name") if prod else f"Product #{c_id}"
         context.user_data["admin_addstock_target_cid"] = c_id
         context.user_data["waiting_for_admin_add_cust_stock"] = True
@@ -1946,6 +1961,13 @@ async def handle_admin_router(update: Update, context: ContextTypes.DEFAULT_TYPE
     elif data.startswith("admin_viewstock_"):
         c_id = int(data.replace("admin_viewstock_", ""))
         prod = await database.get_custom_product(c_id)
+        if not prod:
+            await query.answer("❌ Product not found.", show_alert=True)
+            return
+        if not is_super_admin(user_id) and prod.get("created_by") and int(prod["created_by"]) != int(user_id):
+            await query.answer("🔒 Privacy Protected: You cannot view stock credentials for other managers' products.", show_alert=True)
+            return
+
         prod_name = prod.get("name") if prod else f"Product #{c_id}"
         preview = await database.get_custom_product_available_preview(c_id, limit=5)
         stock_cnt = prod.get("stock_count", 0) if prod else 0
@@ -3245,7 +3267,7 @@ async def handle_user_text_input(update: Update, context: ContextTypes.DEFAULT_T
             )
             return
 
-        prod_id = await database.add_custom_product(name=name, price=price)
+        prod_id = await database.add_custom_product(name=name, price=price, created_by=user.id)
         back_markup = [
             [InlineKeyboardButton("➕ Add Stock Now", callback_data=f"admin_addstock_{prod_id}")],
             [InlineKeyboardButton("📦 Custom Products", callback_data="admin_custom_prods")]
@@ -3284,12 +3306,23 @@ async def handle_user_text_input(update: Update, context: ContextTypes.DEFAULT_T
         c_id = context.user_data.pop("admin_addstock_target_cid", None)
         if not c_id:
             await update.message.reply_text("❌ Session expired. Please select product again from Custom Products menu.")
+            return
+
+        prod = await database.get_custom_product(c_id)
+        if not prod:
+            await update.message.reply_text("❌ Product not found.")
+            return
+
+        if not is_super_admin(user.id) and prod.get("created_by") and int(prod["created_by"]) != int(user.id):
+            await update.message.reply_text("❌ Permission Denied: You can only add stock to products created by you.")
+            return
+
         stock_lines = parse_raw_stock_input(text)
         if not stock_lines:
             await update.message.reply_text("❌ No valid stock items found in your message.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Custom Products", callback_data="admin_custom_prods")]]))
             return
 
-        added_count = await database.add_custom_product_stock(c_id, stock_lines)
+        added_count = await database.add_custom_product_stock(c_id, stock_lines, added_by=user.id)
         prod = await database.get_custom_product(c_id)
         prod_name = prod.get("name") if prod else f"Product #{c_id}"
         total_stock = prod.get("stock_count", added_count) if prod else added_count
@@ -3364,7 +3397,7 @@ async def addproduct_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await update.message.reply_text("❌ Invalid price format.")
         return
 
-    prod_id = await database.add_custom_product(name=name, price=price)
+    prod_id = await database.add_custom_product(name=name, price=price, created_by=user_id)
     await update.message.reply_text(
         f"✅ *In-House Product Created!*\n\n🆔 *Product ID:* `#{prod_id}`\n📦 *Name:* {name}\n💵 *Price:* `${price:.2f}` USD",
         parse_mode=ParseMode.MARKDOWN,
@@ -3396,14 +3429,18 @@ async def addstock_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     prod = await database.get_custom_product(c_id)
     if not prod:
-        await update.message.reply_text(f"❌ Custom Product `#{c_id}` not found. Type `/customproducts` to view all products.", parse_mode=ParseMode.MARKDOWN)
+        await update.message.reply_text(f"❌ Custom Product `#{c_id}` not found. Type `/customproducts` to view your products.", parse_mode=ParseMode.MARKDOWN)
+        return
+
+    if not is_super_admin(user_id) and prod.get("created_by") and int(prod["created_by"]) != int(user_id):
+        await update.message.reply_text("❌ Permission Denied: You can only manage stock for products created by you.")
         return
 
     context.user_data["admin_addstock_target_cid"] = c_id
     context.user_data["waiting_for_admin_add_cust_stock"] = True
     await update.message.reply_text(
         f"➕ *Add Stock for `{prod['name']}`* (ID `#{c_id}`)\n\n"
-        "Send your stock accounts/credentials line-by-line in your next message (e.g. `email:pass`):\n\n"
+        "Send your stock accounts/credentials in your next message (any custom format supported):\n\n"
         "Example:\n"
         "`user1@gmail.com:pass1234`\n"
         "`user2@gmail.com:pass5678`\n\n"
