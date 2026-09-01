@@ -195,8 +195,10 @@ async def handle_navigation(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == "nav_help":
         await show_help(query, context)
     elif data == "nav_admin":
-        if is_admin(user.id):
+        if is_super_admin(user.id):
             await show_admin_panel(query, context)
+        elif is_assistant(user.id):
+            await handle_admin_custom_products_callback(query, context)
         else:
             await query.edit_message_text("❌ Unauthorized access.", reply_markup=main_menu_keyboard(user.id))
 
@@ -616,14 +618,19 @@ async def show_help(query, context: ContextTypes.DEFAULT_TYPE):
 
 async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    if not is_admin(user_id):
+    if is_super_admin(user_id):
+        await show_admin_panel(update, context)
+    elif is_assistant(user_id):
+        await handle_admin_custom_products_callback(update, context)
+    else:
         await update.message.reply_text("❌ Unauthorized access.")
-        return
-    await show_admin_panel(update, context)
 
 async def show_admin_panel(update_or_query, context: ContextTypes.DEFAULT_TYPE):
     user_id = update_or_query.from_user.id if hasattr(update_or_query, "from_user") else update_or_query.effective_user.id
-    if not is_admin(user_id):
+    if not is_super_admin(user_id):
+        if is_assistant(user_id):
+            await handle_admin_custom_products_callback(update_or_query, context)
+            return
         if hasattr(update_or_query, "edit_message_text"):
             await update_or_query.edit_message_text("❌ Unauthorized access.", reply_markup=main_menu_keyboard(user_id))
         else:
@@ -3785,7 +3792,7 @@ def main():
     app.add_handler(CommandHandler(["blockedusers", "blockedbuyers"], blockedusers_command))
     app.add_handler(CommandHandler("addproduct", addproduct_command))
     app.add_handler(CommandHandler("addstock", addstock_command))
-    app.add_handler(CommandHandler(["customproducts", "inhouseproducts"], customproducts_command))
+    app.add_handler(CommandHandler(["customproducts", "inhouseproducts", "assistant", "stock", "stockpanel"], customproducts_command))
     app.add_handler(CommandHandler(["toggleproduct", "hideproduct", "showproduct"], toggleproduct_command))
 
     # Callbacks
