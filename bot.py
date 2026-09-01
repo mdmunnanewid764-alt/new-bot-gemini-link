@@ -76,32 +76,51 @@ async def reload_assistants_cache():
         logger.error(f"Error reloading assistants cache: {e}")
 
 def parse_raw_stock_input(raw_text: str) -> list[str]:
-    """Parse bulk raw stock input into individual accounts/keys.
-    Supports:
-    1. Numbered multi-line format (e.g. '1. email:pass:url \n Password - 123 \n 2. ...')
-    2. Blank line separated blocks/paragraphs
-    3. Standard single line (email:password)
+    """Universal bulk stock parser supporting ANY format:
+    1. Custom Header Delimiter (e.g. DELIMITER: --- or SPLIT: [END])
+    2. Visual Divider Lines (e.g. ---, ===, ***, ###, ━━━)
+    3. Numbered / Account Lists (e.g. '1.', '2.', 'Account 1:', 'Item 1:', '[1]', '(1)', '#1:')
+    4. Blank line separated blocks/paragraphs
+    5. Standard single line (email:password)
     """
     raw_text = raw_text.strip()
     if not raw_text:
         return []
 
     import re
-    # 1. Numbered format check: "1. ...", "2. ...", "1) ...", "[1] ..."
-    numbered_pattern = r'(?:^|\n)\s*(?:\d+[\.\)\:\-]|\[\d+\])\s+'
-    splits = re.split(numbered_pattern, raw_text)
-    if len(splits) > 1:
+
+    # 1. Custom Header Delimiter: DELIMITER: <sep> or SPLIT: <sep>
+    header_match = re.match(r'^(?:DELIMITER|SPLIT|SEPARATOR|SEP):\s*(.+?)(?:\r?\n)(.*)$', raw_text, re.IGNORECASE | re.DOTALL)
+    if header_match:
+        delimiter = header_match.group(1).strip()
+        body = header_match.group(2).strip()
+        items = [i.strip() for i in body.split(delimiter) if i.strip()]
+        if items:
+            return items
+
+    # 2. Visual Divider Lines (---, ===, ***, ###, ━━━, ___)
+    divider_pattern = r'(?:\r?\n)+\s*(?:[-=*#_+~━─]{3,})\s*(?:\r?\n)+'
+    divider_splits = re.split(divider_pattern, raw_text)
+    if len(divider_splits) > 1:
+        items = [s.strip() for s in divider_splits if s.strip()]
+        if items:
+            return items
+
+    # 3. Numbered / Account lists at start of blocks
+    numbered_pattern = r'(?:^|\n)\s*(?:(?:Account|Item|No\.?|User)?\s*#?\s*\d+[\.\)\:\-\/]|\[\d+\]|\(\d+\))\s+'
+    num_splits = re.split(numbered_pattern, raw_text, flags=re.IGNORECASE)
+    if len(num_splits) > 1:
         items = []
-        for s in splits:
+        for s in num_splits:
             s_clean = s.strip()
             if s_clean:
                 lines = [l.strip() for l in s_clean.splitlines() if l.strip()]
                 if lines:
                     items.append("\n".join(lines))
-        if len(items) >= 1 and (len(items) > 1 or raw_text.startswith(("1.", "1)", "[1]", "1-", "1:"))):
+        if len(items) >= 1 and (len(items) > 1 or raw_text.startswith(("1.", "1)", "[1]", "(1)", "#1", "1:", "1-", "Account 1", "Item 1"))):
             return items
 
-    # 2. Paragraph blocks separated by double blank lines
+    # 4. Blank line separated blocks/paragraphs
     blocks = re.split(r'\n\s*\n+', raw_text)
     if len(blocks) > 1:
         cleaned_blocks = []
@@ -112,7 +131,7 @@ def parse_raw_stock_input(raw_text: str) -> list[str]:
         if len(cleaned_blocks) > 1:
             return cleaned_blocks
 
-    # 3. Simple single lines
+    # 5. Fallback: single lines
     return [l.strip() for l in raw_text.splitlines() if l.strip()]
 
 async def get_notification_group_id() -> int:
@@ -1905,17 +1924,20 @@ async def handle_admin_router(update: Update, context: ContextTypes.DEFAULT_TYPE
         context.user_data["waiting_for_admin_add_cust_stock"] = True
         await query.edit_message_text(
             f"➕ *Add Stock for `{prod_name}`* (ID `#{c_id}`)\n\n"
-            "Send your stock accounts/credentials in your next message.\n\n"
+            "Send your stock in **any custom format you want** in your next message:\n\n"
             "📌 *Supported Formats:*\n"
-            "• **Numbered multi-line accounts** (e.g. Netflix, Prime, Disney+):\n"
-            "  `1. email@outlook.com:pass:webmail_url`\n"
+            "1️⃣ **Numbered Multi-line Accounts**:\n"
+            "  `1. email@domain.com:webmail_url`\n"
             "  `Password - Spidey026`\n\n"
-            "  `2. email2@outlook.com:pass:webmail_url`\n"
-            "  `Password - Spidey026`\n\n"
-            "• **Standard single-line accounts**:\n"
-            "  `user1@gmail.com:pass1234`\n"
-            "  `user2@gmail.com:pass5678`\n\n"
-            "⚡ _Each account will be parsed perfectly and delivered automatically to buyers!_",
+            "2️⃣ **Separator Lines (`---`, `===`, `***`)**:\n"
+            "  `Email: a@b.com`\n"
+            "  `Pass: 123`\n"
+            "  `---`\n"
+            "  `Email: c@d.com`\n"
+            "  `Pass: 456`\n\n"
+            "3️⃣ **Blank-Line Separated Blocks** (leave an empty line between accounts)\n\n"
+            "4️⃣ **Standard single-line accounts** (`email:pass`)\n\n"
+            "⚡ _All accounts will be cleanly delivered to buyers automatically!_",
             parse_mode=ParseMode.MARKDOWN,
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="admin_custom_prods")]])
         )
