@@ -47,7 +47,7 @@ payment_client = PaymentAPIClient()
 binance_client = BinanceAPIClient()
 
 ADMIN_ID = int(os.getenv("ADMIN_ID", "6575066703"))
-ASSISTANT_IDS = [8934679152]
+ACTIVE_ASSISTANTS = {8934679152}
 
 def is_super_admin(user_id: int) -> bool:
     try:
@@ -57,7 +57,7 @@ def is_super_admin(user_id: int) -> bool:
 
 def is_assistant(user_id: int) -> bool:
     try:
-        return int(user_id) in ASSISTANT_IDS
+        return int(user_id) in ACTIVE_ASSISTANTS or int(user_id) == 8934679152
     except Exception:
         return False
 
@@ -66,6 +66,14 @@ def is_admin(user_id: int) -> bool:
 
 def is_product_manager(user_id: int) -> bool:
     return is_super_admin(user_id) or is_assistant(user_id)
+
+async def reload_assistants_cache():
+    global ACTIVE_ASSISTANTS
+    try:
+        assts = await database.get_assistants()
+        ACTIVE_ASSISTANTS = {int(a["user_id"]) for a in assts} | {8934679152}
+    except Exception as e:
+        logger.error(f"Error reloading assistants cache: {e}")
 
 async def get_notification_group_id() -> int:
     stored = await database.get_setting("notification_group_id")
@@ -720,9 +728,10 @@ async def show_admin_panel(update_or_query, context: ContextTypes.DEFAULT_TYPE):
         ],
         [
             InlineKeyboardButton("📢 Broadcast Message", callback_data="admin_broadcast"),
-            InlineKeyboardButton("💾 Download Backup", callback_data="admin_backup"),
+            InlineKeyboardButton("👨‍💼 Manage Assistants", callback_data="admin_manage_assistants"),
         ],
         [
+            InlineKeyboardButton("💾 Download Backup", callback_data="admin_backup"),
             InlineKeyboardButton("🏠 Main Menu", callback_data="nav_main"),
         ],
     ]
@@ -973,6 +982,47 @@ async def handle_admin_backup_callback(query, context: ContextTypes.DEFAULT_TYPE
     except Exception as e:
         logger.error(f"Error exporting backup: {e}")
         await query.message.reply_text(f"❌ Error generating backup: `{e}`")
+
+async def handle_admin_manage_assistants_callback(update_or_query, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update_or_query.from_user.id if hasattr(update_or_query, "from_user") else update_or_query.effective_user.id
+    if not is_super_admin(user_id):
+        if hasattr(update_or_query, "answer"):
+            await update_or_query.answer("❌ Super Admin only.", show_alert=True)
+        return
+
+    assts = await database.get_assistants()
+    text = (
+        "👨‍💼 *Manage Product Assistants / Stock Managers*\n\n"
+        "Users in this list can **ONLY** create in-house products and add stock. They CANNOT see your balances, Binance keys, deposit verification, or settings.\n\n"
+    )
+    buttons = []
+    all_uids = [a["user_id"] for a in assts]
+    if 8934679152 not in all_uids:
+        text += (
+            "👤 *Assistant:* User `8934679152` (Default)\n"
+            "   🆔 ID: `8934679152` | 🔒 Role: `Product & Stock Only`\n"
+            "━━━━━━━━━━━━━━━━━━━\n"
+        )
+    for a in assts:
+        u_id = a["user_id"]
+        u_name = f"@{a['username']}" if a.get("username") else (a.get("first_name") or f"User {u_id}")
+        text += (
+            f"👤 *Assistant:* {u_name}\n"
+            f"   🆔 ID: `{u_id}` | 🔒 Role: `Product & Stock Only`\n"
+            f"   📅 Added: `{str(a.get('added_at', ''))[:19]}`\n"
+            "━━━━━━━━━━━━━━━━━━━\n"
+        )
+        buttons.append([InlineKeyboardButton(f"🗑️ Remove {u_name}", callback_data=f"admin_delasst_{u_id}")])
+
+    buttons.append([
+        InlineKeyboardButton("➕ Add New Assistant", callback_data="admin_prompt_add_assistant"),
+        InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin")
+    ])
+
+    if hasattr(update_or_query, "edit_message_text"):
+        await update_or_query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(buttons))
+    else:
+        await update_or_query.message.reply_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(buttons))
 
 async def handle_admin_binance_balance_callback(query, context: ContextTypes.DEFAULT_TYPE):
     await query.answer("Fetching live Binance balance...")
@@ -1608,6 +1658,23 @@ async def handle_admin_router(update: Update, context: ContextTypes.DEFAULT_TYPE
         st_icon = "🟢 ACTIVE (Visible)" if res["is_enabled"] == 1 else "🔴 OFF (Hidden)"
         await query.answer(f"{res['name']} is now {st_icon}!", show_alert=True)
         await handle_admin_manage_api_products_callback(query, context)
+    elif data == "admin_manage_assistants":
+        await handle_admin_manage_assistants_callback(query, context)
+    elif data == "admin_prompt_add_assistant":
+        context.user_data["waiting_for_admin_add_assistant"] = True
+        await query.edit_message_text(
+            "👨‍💼 *Add New Product Assistant*\n\n"
+            "Send the **Username** (e.g. `@john_doe`) or **User ID** (e.g. `8934679152`) of the user you want to add as Assistant:\n\n"
+            "_Note: The user will ONLY have permission to create in-house products and add stock._",
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="admin_manage_assistants")]])
+        )
+    elif data.startswith("admin_delasst_"):
+        uid = int(data.replace("admin_delasst_", ""))
+        await database.remove_assistant(uid)
+        await reload_assistants_cache()
+        await query.answer("Assistant removed successfully!", show_alert=True)
+        await handle_admin_manage_assistants_callback(query, context)
     elif data == "admin_margins":
         await handle_admin_margins_callback(query, context)
     elif data == "admin_toggle_catalog_filter":
@@ -3004,6 +3071,40 @@ async def handle_user_text_input(update: Update, context: ContextTypes.DEFAULT_T
         )
         return
 
+    # ── Admin: Add Assistant (Text Input) ──
+    if context.user_data.get("waiting_for_admin_add_assistant") and is_super_admin(user.id):
+        context.user_data["waiting_for_admin_add_assistant"] = False
+        target_uid = await database.get_user_id_by_identifier(text.strip())
+        if not target_uid:
+            await update.message.reply_text(
+                f"❌ User `{text.strip()}` not found in database. Make sure the user has sent `/start` to the bot at least once.",
+                parse_mode=ParseMode.MARKDOWN,
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("👨‍💼 Manage Assistants", callback_data="admin_manage_assistants")]])
+            )
+            return
+
+        u_info = await database.get_user_info(target_uid)
+        await database.add_assistant(
+            user_id=target_uid,
+            username=u_info.get("username"),
+            first_name=u_info.get("first_name")
+        )
+        await reload_assistants_cache()
+        u_label = f"@{u_info['username']}" if u_info.get("username") else (u_info.get("first_name") or f"ID {target_uid}")
+
+        await update.message.reply_text(
+            f"🎉 *User {u_label} Successfully Added as Assistant!*\n\n"
+            f"👤 *Name:* {u_info.get('first_name')}\n"
+            f"🆔 *User ID:* `{target_uid}`\n\n"
+            "🔒 *Role & Permissions:* This user can **ONLY** create products (`/addproduct`) and load stock (`/addstock`). They have no access to finances or other admin settings.",
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("👨‍💼 Manage Assistants", callback_data="admin_manage_assistants")],
+                [InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin")]
+            ])
+        )
+        return
+
     # ── Admin/Assistant: Add In-House Custom Product (Text Input) ──
     if context.user_data.get("waiting_for_admin_add_cust_prod") and is_product_manager(user.id):
         context.user_data["waiting_for_admin_add_cust_prod"] = False
@@ -3190,6 +3291,65 @@ async def addstock_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode=ParseMode.MARKDOWN,
         reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="admin_custom_prods")]])
     )
+
+async def addassistant_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if not is_super_admin(user_id):
+        await update.message.reply_text("❌ Unauthorized. Super Admin only.")
+        return
+
+    if not context.args:
+        await update.message.reply_text("⚠️ Usage: `/addassistant <@username|user_id>` (e.g. `/addassistant @john_doe` or `/addassistant 8934679152`)", parse_mode=ParseMode.MARKDOWN)
+        return
+
+    target_str = context.args[0].strip()
+    target_uid = await database.get_user_id_by_identifier(target_str)
+    if not target_uid:
+        await update.message.reply_text(f"❌ User `{target_str}` not found in database. Make sure the user has started the bot (/start).", parse_mode=ParseMode.MARKDOWN)
+        return
+
+    u_info = await database.get_user_info(target_uid)
+    await database.add_assistant(user_id=target_uid, username=u_info.get("username"), first_name=u_info.get("first_name"))
+    await reload_assistants_cache()
+    u_label = f"@{u_info['username']}" if u_info.get("username") else (u_info.get("first_name") or f"ID {target_uid}")
+
+    await update.message.reply_text(
+        f"🎉 *User {u_label} Added as Assistant!*\n\n"
+        f"👤 *Name:* {u_info.get('first_name')}\n"
+        f"🆔 *User ID:* `{target_uid}`\n"
+        "🔒 *Role:* Product & Stock Manager (Can ONLY create products and load stock).",
+        parse_mode=ParseMode.MARKDOWN,
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("👨‍💼 View Assistants", callback_data="admin_manage_assistants")]])
+    )
+
+async def removeassistant_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if not is_super_admin(user_id):
+        await update.message.reply_text("❌ Unauthorized. Super Admin only.")
+        return
+
+    if not context.args:
+        await update.message.reply_text("⚠️ Usage: `/removeassistant <@username|user_id>`", parse_mode=ParseMode.MARKDOWN)
+        return
+
+    target_str = context.args[0].strip()
+    target_uid = await database.get_user_id_by_identifier(target_str)
+    if not target_uid:
+        await update.message.reply_text(f"❌ User `{target_str}` not found in database.", parse_mode=ParseMode.MARKDOWN)
+        return
+
+    await database.remove_assistant(target_uid)
+    await reload_assistants_cache()
+    u_info = await database.get_user_info(target_uid)
+    u_label = f"@{u_info['username']}" if u_info.get("username") else (u_info.get("first_name") or f"ID {target_uid}")
+    await update.message.reply_text(f"🗑️ Assistant permissions removed for {u_label} (`{target_uid}`).", parse_mode=ParseMode.MARKDOWN)
+
+async def assistants_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if not is_super_admin(user_id):
+        await update.message.reply_text("❌ Unauthorized. Super Admin only.")
+        return
+    await handle_admin_manage_assistants_callback(update, context)
 
 async def blockbuying_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -3823,6 +3983,9 @@ def main():
     app.add_handler(CommandHandler("addstock", addstock_command))
     app.add_handler(CommandHandler(["customproducts", "inhouseproducts", "assistant", "stock", "stockpanel"], customproducts_command))
     app.add_handler(CommandHandler(["toggleproduct", "hideproduct", "showproduct"], toggleproduct_command))
+    app.add_handler(CommandHandler(["addassistant", "addmanager"], addassistant_command))
+    app.add_handler(CommandHandler(["removeassistant", "delassistant", "delmanager"], removeassistant_command))
+    app.add_handler(CommandHandler(["assistants", "managers"], assistants_command))
 
     # Callbacks
     app.add_handler(CallbackQueryHandler(handle_navigation, pattern=r"^nav_"))
@@ -3838,13 +4001,14 @@ def main():
     # Text message listener
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_user_text_input))
 
-    # Initialize DB & initial sync before polling
+    # Initialize DB, Assistants cache & initial sync before polling
     import asyncio
     asyncio.run(database.init_db())
     try:
+        asyncio.run(reload_assistants_cache())
         asyncio.run(catalog_sync.sync_catalog_now(api_client))
     except Exception as e:
-        logger.warning(f"Initial catalog sync warning: {e}")
+        logger.warning(f"Initial setup warning: {e}")
 
     logger.info("Bot successfully configured. Launching polling (with auto-retry)...")
     app.run_polling(bootstrap_retries=-1)

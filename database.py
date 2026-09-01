@@ -134,6 +134,12 @@ async def init_db():
                         reason TEXT,
                         blocked_at TEXT
                     );
+                    CREATE TABLE IF NOT EXISTS assistants (
+                        user_id BIGINT PRIMARY KEY,
+                        username TEXT,
+                        first_name TEXT,
+                        added_at TEXT
+                    );
                     CREATE TABLE IF NOT EXISTS custom_products (
                         id SERIAL PRIMARY KEY,
                         name TEXT NOT NULL,
@@ -221,6 +227,14 @@ async def init_db():
                 user_id INTEGER PRIMARY KEY,
                 reason TEXT,
                 blocked_at TEXT
+            )
+        """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS assistants (
+                user_id INTEGER PRIMARY KEY,
+                username TEXT,
+                first_name TEXT,
+                added_at TEXT
             )
         """)
         await db.execute("""
@@ -1378,5 +1392,104 @@ async def toggle_synced_product_status(supplier_product_id: int) -> dict:
         await db.execute("UPDATE products_synced SET is_enabled = ? WHERE supplier_product_id = ?", (new_status, int(supplier_product_id)))
         await db.commit()
     return {"id": supplier_product_id, "name": prod_name, "is_enabled": new_status}
+
+async def add_assistant(user_id: int, username: str = None, first_name: str = None) -> bool:
+    """Add a user as an Assistant / Product Manager."""
+    now = datetime.utcnow().isoformat()
+    if USE_POSTGRES:
+        try:
+            pool = await get_pg_pool()
+            async with pool.acquire() as conn:
+                await conn.execute("""
+                    INSERT INTO assistants (user_id, username, first_name, added_at)
+                    VALUES ($1, $2, $3, $4)
+                    ON CONFLICT(user_id) DO UPDATE SET
+                        username = EXCLUDED.username,
+                        first_name = EXCLUDED.first_name,
+                        added_at = EXCLUDED.added_at
+                """, int(user_id), username, first_name, now)
+                return True
+        except Exception as e:
+            logger.error(f"PG add_assistant error: {e}")
+
+    import aiosqlite
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("""
+            INSERT INTO assistants (user_id, username, first_name, added_at)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(user_id) DO UPDATE SET
+                username = excluded.username,
+                first_name = excluded.first_name,
+                added_at = excluded.added_at
+        """, (int(user_id), username, first_name, now))
+        await db.commit()
+    return True
+
+async def remove_assistant(user_id: int) -> bool:
+    """Remove a user from Assistant / Product Manager role."""
+    if USE_POSTGRES:
+        try:
+            pool = await get_pg_pool()
+            async with pool.acquire() as conn:
+                await conn.execute("DELETE FROM assistants WHERE user_id = $1", int(user_id))
+                return True
+        except Exception as e:
+            logger.error(f"PG remove_assistant error: {e}")
+
+    import aiosqlite
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("DELETE FROM assistants WHERE user_id = ?", (int(user_id),))
+        await db.commit()
+    return True
+
+async def get_assistants() -> list[dict]:
+    """Retrieve all active Assistants."""
+    if USE_POSTGRES:
+        try:
+            pool = await get_pg_pool()
+            async with pool.acquire() as conn:
+                rows = await conn.fetch("""
+                    SELECT a.user_id, COALESCE(a.username, u.username) as username, 
+                           COALESCE(a.first_name, u.first_name) as first_name, a.added_at
+                    FROM assistants a
+                    LEFT JOIN users u ON a.user_id = u.user_id
+                    ORDER BY a.added_at DESC
+                """)
+                return [dict(r) for r in rows]
+        except Exception as e:
+            logger.error(f"PG get_assistants error: {e}")
+
+    import aiosqlite
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute("""
+            SELECT a.user_id, COALESCE(a.username, u.username) as username, 
+                   COALESCE(a.first_name, u.first_name) as first_name, a.added_at
+            FROM assistants a
+            LEFT JOIN users u ON a.user_id = u.user_id
+            ORDER BY a.added_at DESC
+        """) as cursor:
+            rows = await cursor.fetchall()
+            return [dict(r) for r in rows]
+
+async def is_assistant_in_db(user_id: int) -> bool:
+    """Check if a user is an authorized assistant in DB."""
+    if int(user_id) == 8934679152:
+        return True
+    if USE_POSTGRES:
+        try:
+            pool = await get_pg_pool()
+            async with pool.acquire() as conn:
+                val = await conn.fetchval("SELECT 1 FROM assistants WHERE user_id = $1", int(user_id))
+                return bool(val)
+        except Exception as e:
+            logger.error(f"PG is_assistant_in_db error: {e}")
+
+    import aiosqlite
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute("SELECT 1 FROM assistants WHERE user_id = ?", (int(user_id),)) as cursor:
+            row = await cursor.fetchone()
+            return bool(row)
+    return False
 
 
