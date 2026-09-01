@@ -439,11 +439,13 @@ async def handle_buy_checkout(update: Update, context: ContextTypes.DEFAULT_TYPE
 
         # Alert Admin immediately that blocked user tried to purchase
         try:
+            raw_uname = f"`@{user.username}`" if user.username else "`N/A`"
+            raw_fname = f"`{user.first_name}`" if user.first_name else "`User`"
             admin_alert = (
                 "🚨 *Blocked User Purchase Attempt Intercepted!*\n\n"
-                f"👤 *User:* {user.first_name} (@{user.username or 'N/A'})\n"
+                f"👤 *User:* {raw_fname} ({raw_uname})\n"
                 f"🆔 *User ID:* `{user.id}`\n"
-                f"📦 *Attempted Item:* {prod_name} (x{qty})\n"
+                f"📦 *Attempted Item:* `{prod_name}` (x{qty})\n"
                 f"💰 *Order Total:* `${total_price:.2f}` USD\n"
                 f"💳 *User Wallet Balance:* `${user_balance:.2f}` USD\n\n"
                 "⚡ Purchase was blocked. User was told to contact Admin."
@@ -602,12 +604,14 @@ async def handle_buy_checkout(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     # Notify Admin of new sale
     try:
+        raw_uname = f"`@{user.username}`" if user.username else "`N/A`"
+        raw_fname = f"`{user.first_name}`" if user.first_name else "`Buyer`"
         admin_msg = (
             f"🛍️ *New Order Notification*\n\n"
-            f"👤 *Buyer:* {user.first_name} (@{user.username or 'N/A'})\n"
+            f"👤 *Buyer:* {raw_fname} ({raw_uname})\n"
             f"🆔 *User ID:* `{user.id}`\n"
-            f"📦 *Product:* {prod_name}\n"
-            f"🔢 *Qty:* {qty} | 💰 *Total:* ${total_price:.2f}"
+            f"📦 *Product:* `{prod_name}`\n"
+            f"🔢 *Qty:* `{qty}` | 💰 *Total:* `${total_price:.2f}` USD"
         )
         await context.bot.send_message(chat_id=ADMIN_ID, text=admin_msg, parse_mode=ParseMode.MARKDOWN)
     except Exception:
@@ -906,16 +910,18 @@ async def handle_admin_blocked_buyers_callback(query, context: ContextTypes.DEFA
     buttons = []
     for b in blocked:
         u_id = b["user_id"]
-        u_name = f"@{b['username']}" if b.get("username") else (b.get("first_name") or f"User {u_id}")
+        raw_uname = b.get('username')
+        u_name = f"`@{raw_uname}`" if raw_uname else (f"`{b.get('first_name')}`" if b.get('first_name') else f"`ID {u_id}`")
+        btn_label = f"@{raw_uname}" if raw_uname else (b.get('first_name') or f"ID {u_id}")
         bal = float(b.get("balance", 0.0))
         text += (
-            f"👤 *{u_name}* (`{u_id}`)\n"
+            f"👤 {u_name} (`{u_id}`)\n"
             f"💳 Balance: `${bal:.2f}` USD | Blocked: `{str(b.get('blocked_at', ''))[:19]}`\n"
             f"━━━━━━━━━━━━━━━━━━━\n"
         )
         buttons.append([
-            InlineKeyboardButton(f"🟢 Unblock {u_name}", callback_data=f"admin_ubunblock_{u_id}"),
-            InlineKeyboardButton(f"⚙️ Profile", callback_data=f"admin_usr_{u_id}")
+            InlineKeyboardButton(f"🟢 Unblock {btn_label}", callback_data=f"admin_ubunblock_{u_id}"),
+            InlineKeyboardButton("⚙️ Profile", callback_data=f"admin_usr_{u_id}")
         ])
 
     if not blocked:
@@ -1072,14 +1078,16 @@ async def handle_admin_manage_assistants_callback(update_or_query, context: Cont
     buttons = []
     for a in assts:
         u_id = a["user_id"]
-        u_name = f"@{a['username']}" if a.get("username") else (a.get("first_name") or f"User {u_id}")
+        raw_uname = a.get('username')
+        u_name = f"`@{raw_uname}`" if raw_uname else (f"`{a.get('first_name')}`" if a.get('first_name') else f"`ID {u_id}`")
+        btn_label = f"@{raw_uname}" if raw_uname else (a.get('first_name') or f"ID {u_id}")
         text += (
             f"👤 *Assistant:* {u_name} (`{u_id}`)\n"
             f"   🔒 Role: `Product & Stock Only`\n"
             f"   📅 Added: `{str(a.get('added_at', ''))[:19]}`\n"
             "━━━━━━━━━━━━━━━━━━━\n"
         )
-        buttons.append([InlineKeyboardButton(f"🗑️ Remove Assistant ({u_name[:14]})", callback_data=f"admin_delasst_{u_id}")])
+        buttons.append([InlineKeyboardButton(f"🗑️ Remove Assistant ({btn_label[:14]})", callback_data=f"admin_delasst_{u_id}")])
 
     if not assts:
         text += "🟢 _No assistants are currently active._\n\n"
@@ -1607,7 +1615,8 @@ async def handle_admin_all_deposits_callback(query, context: ContextTypes.DEFAUL
         net = d.get('network') or "CRYPTO"
         st = d.get('status', 'INITIAL').upper()
         st_badge = status_emojis.get(st, f"⚪ {st}")
-        u_label = f"@{d['username']}" if d.get('username') else (d.get('first_name') or f"ID {d['user_id']}")
+        raw_uname = d.get('username')
+        u_label = f"`@{raw_uname}`" if raw_uname else (f"`{d.get('first_name')}`" if d.get('first_name') else f"`ID {d['user_id']}`")
         tx = d.get('tx_hash') or ""
         tx_short = f"`{tx[:8]}...{tx[-6:]}`" if len(tx) > 14 else (f"`{tx}`" if tx else "_No TxHash_")
 
@@ -1653,19 +1662,21 @@ async def handle_admin_deposited_users_callback(query, context: ContextTypes.DEF
     buttons = []
     for u in users[:15]:
         u_id = u['user_id']
-        u_name = f"@{u['username']}" if u.get('username') else (u.get('first_name') or f"User {u_id}")
+        raw_uname = u.get('username')
+        u_name = f"`@{raw_uname}`" if raw_uname else (f"`{u.get('first_name')}`" if u.get('first_name') else f"`ID {u_id}`")
+        btn_label = f"@{raw_uname}" if raw_uname else (u.get('first_name') or f"ID {u_id}")
         paid_sum = float(u.get('total_deposited_paid', 0.0))
         curr_bal = float(u.get('live_balance', 0.0))
         dep_count = u.get('total_deposits_count', 0)
 
         text += (
-            f"👤 *{u_name}* (`{u_id}`)\n"
+            f"👤 {u_name} (`{u_id}`)\n"
             f"💵 Total Paid: `${paid_sum:.2f}` ({dep_count} deposits)\n"
             f"💳 Current Balance: *${curr_bal:.2f}* USD\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
         )
         buttons.append([
-            InlineKeyboardButton(f"⚙️ Manage {u_name} (${curr_bal:.2f})", callback_data=f"admin_usr_{u_id}")
+            InlineKeyboardButton(f"⚙️ Manage {btn_label[:14]} (${curr_bal:.2f})", callback_data=f"admin_usr_{u_id}")
         ])
 
     if not users:
@@ -2554,9 +2565,11 @@ async def handle_user_text_input(update: Update, context: ContextTypes.DEFAULT_T
                 
                 # Send instant notification to Admin
                 try:
+                    raw_uname = f"`@{user.username}`" if user.username else "`N/A`"
+                    raw_fname = f"`{user.first_name}`" if user.first_name else "`User`"
                     admin_success_msg = (
                         "💰 *Deposit Auto-Verified & Credited!*\n\n"
-                        f"👤 *User:* {user.first_name} (@{user.username or 'N/A'})\n"
+                        f"👤 *User:* {raw_fname} ({raw_uname})\n"
                         f"🆔 *User ID:* `{user.id}`\n"
                         f"💵 *Amount Credited:* `+${credit_amount:.2f}` USD\n"
                         f"🌐 *Network / Method:* `{label}`\n"
@@ -2608,9 +2621,11 @@ async def handle_user_text_input(update: Update, context: ContextTypes.DEFAULT_T
             try:
                 curr_user_bal = await database.get_user_balance(user.id)
                 explorer_url = get_explorer_url(network, tx_hash)
+                raw_uname = f"`@{user.username}`" if user.username else "`N/A`"
+                raw_fname = f"`{user.first_name}`" if user.first_name else "`User`"
                 admin_notif = (
                     "📥 *New User Deposit Submitted — Pending Review!*\n\n"
-                    f"👤 *User:* {user.first_name} (@{user.username or 'N/A'})\n"
+                    f"👤 *User:* {raw_fname} ({raw_uname})\n"
                     f"🆔 *User ID:* `{user.id}`\n"
                     f"💵 *Deposit Amount:* `${amount:.2f}` USDT\n"
                     f"🌐 *Network:* `{label}`\n"
@@ -3482,11 +3497,12 @@ async def addassistant_command(update: Update, context: ContextTypes.DEFAULT_TYP
     u_info = await database.get_user_info(target_uid)
     await database.add_assistant(user_id=target_uid, username=u_info.get("username"), first_name=u_info.get("first_name"))
     await reload_assistants_cache()
-    u_label = f"@{u_info['username']}" if u_info.get("username") else (u_info.get("first_name") or f"ID {target_uid}")
+    raw_uname = u_info.get('username')
+    u_label = f"`@{raw_uname}`" if raw_uname else (f"`{u_info.get('first_name')}`" if u_info.get("first_name") else f"`ID {target_uid}`")
 
     await update.message.reply_text(
         f"🎉 *User {u_label} Added as Assistant!*\n\n"
-        f"👤 *Name:* {u_info.get('first_name')}\n"
+        f"👤 *Name:* `{u_info.get('first_name')}`\n"
         f"🆔 *User ID:* `{target_uid}`\n"
         "🔒 *Role:* Product & Stock Manager (Can ONLY create products and load stock).",
         parse_mode=ParseMode.MARKDOWN,
@@ -3512,7 +3528,8 @@ async def removeassistant_command(update: Update, context: ContextTypes.DEFAULT_
     await database.remove_assistant(target_uid)
     await reload_assistants_cache()
     u_info = await database.get_user_info(target_uid)
-    u_label = f"@{u_info['username']}" if u_info.get("username") else (u_info.get("first_name") or f"ID {target_uid}")
+    raw_uname = u_info.get('username')
+    u_label = f"`@{raw_uname}`" if raw_uname else (f"`{u_info.get('first_name')}`" if u_info.get("first_name") else f"`ID {target_uid}`")
     await update.message.reply_text(f"🗑️ Assistant permissions removed for {u_label} (`{target_uid}`).", parse_mode=ParseMode.MARKDOWN)
 
 async def assistants_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -3540,7 +3557,8 @@ async def blockbuying_command(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     await database.block_user_buying(target_uid)
     u_info = await database.get_user_info(target_uid)
-    u_label = f"@{u_info['username']}" if u_info.get("username") else (u_info.get("first_name") or f"ID {target_uid}")
+    raw_uname = u_info.get('username')
+    u_label = f"`@{raw_uname}`" if raw_uname else (f"`{u_info.get('first_name')}`" if u_info.get("first_name") else f"`ID {target_uid}`")
     bal = float(u_info.get("balance", 0.0))
     await update.message.reply_text(
         f"🚫 *Buying Blocked for User {u_label}* (`{target_uid}`)\n\n"
@@ -3548,7 +3566,7 @@ async def blockbuying_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         "🔒 User cannot buy any items now. Order will pause and direct user to Admin support.",
         parse_mode=ParseMode.MARKDOWN,
         reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton(f"⚙️ Manage Profile", callback_data=f"admin_usr_{target_uid}")],
+            [InlineKeyboardButton("⚙️ Manage Profile", callback_data=f"admin_usr_{target_uid}")],
             [InlineKeyboardButton("🚫 Blocked Buyers List", callback_data="admin_blocked_buyers")]
         ])
     )
@@ -3571,7 +3589,8 @@ async def unblockbuying_command(update: Update, context: ContextTypes.DEFAULT_TY
 
     await database.unblock_user_buying(target_uid)
     u_info = await database.get_user_info(target_uid)
-    u_label = f"@{u_info['username']}" if u_info.get("username") else (u_info.get("first_name") or f"ID {target_uid}")
+    raw_uname = u_info.get('username')
+    u_label = f"`@{raw_uname}`" if raw_uname else (f"`{u_info.get('first_name')}`" if u_info.get("first_name") else f"`ID {target_uid}`")
     await update.message.reply_text(
         f"🟢 *Buying Restored for User {u_label}* (`{target_uid}`)\n\nUser can now purchase products normally.",
         parse_mode=ParseMode.MARKDOWN,
@@ -3753,7 +3772,8 @@ async def addbalance_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     new_bal = await database.add_user_balance(target_uid, amt)
     u_info = await database.get_user_info(target_uid)
-    u_label = f"@{u_info['username']}" if u_info.get("username") else (u_info.get("first_name") or f"ID {target_uid}")
+    raw_uname = u_info.get('username')
+    u_label = f"`@{raw_uname}`" if raw_uname else (f"`{u_info.get('first_name')}`" if u_info.get("first_name") else f"`ID {target_uid}`")
     await update.message.reply_text(
         f"✅ *Balance Updated!*\n\n"
         f"👤 *User:* {u_label} (`{target_uid}`)\n"
@@ -3921,7 +3941,8 @@ async def deductbalance_command(update: Update, context: ContextTypes.DEFAULT_TY
 
     new_bal = await database.force_deduct_user_balance(target_uid, amt)
     u_info = await database.get_user_info(target_uid)
-    u_label = f"@{u_info['username']}" if u_info.get("username") else (u_info.get("first_name") or f"ID {target_uid}")
+    raw_uname = u_info.get('username')
+    u_label = f"`@{raw_uname}`" if raw_uname else (f"`{u_info.get('first_name')}`" if u_info.get("first_name") else f"`ID {target_uid}`")
     await update.message.reply_text(
         f"✅ *Balance Deducted:*\nUser {u_label} (`{target_uid}`): `-${amt:.2f}` USD\n💳 *New Balance:* `${new_bal:.2f}` USD",
         parse_mode=ParseMode.MARKDOWN
@@ -3949,7 +3970,8 @@ async def setbalance_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     new_bal = await database.set_user_balance(target_uid, amt)
     u_info = await database.get_user_info(target_uid)
-    u_label = f"@{u_info['username']}" if u_info.get("username") else (u_info.get("first_name") or f"ID {target_uid}")
+    raw_uname = u_info.get('username')
+    u_label = f"`@{raw_uname}`" if raw_uname else (f"`{u_info.get('first_name')}`" if u_info.get("first_name") else f"`ID {target_uid}`")
     await update.message.reply_text(
         f"✅ *Exact Balance Set:*\nUser {u_label} (`{target_uid}`): `${new_bal:.2f}` USD",
         parse_mode=ParseMode.MARKDOWN
@@ -3971,11 +3993,14 @@ async def checkbalance_command(update: Update, context: ContextTypes.DEFAULT_TYP
 
     u_info = await database.get_user_info(target_uid)
     orders = await database.get_user_orders(target_uid, limit=5)
+    raw_uname = u_info.get('username')
+    u_name_display = f"`@{raw_uname}`" if raw_uname else "`N/A`"
+    f_name_display = u_info.get('first_name') or 'N/A'
     await update.message.reply_text(
         f"🔍 *User Info:*\n"
         f"🆔 User ID: `{target_uid}`\n"
-        f"👤 Name: {u_info.get('first_name') or 'N/A'}\n"
-        f"🌐 Username: @{u_info.get('username') or 'N/A'}\n"
+        f"👤 Name: `{f_name_display}`\n"
+        f"🌐 Username: {u_name_display}\n"
         f"💳 Balance: `${u_info.get('balance', 0.0):.2f}` USD\n"
         f"🛍️ Recent Orders: `{len(orders)}`",
         parse_mode=ParseMode.MARKDOWN
@@ -3990,7 +4015,7 @@ async def getid_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         f"🆔 *Chat Information*\n\n"
         f"📌 *Chat ID:* `{chat_id}`\n"
-        f"🏷️ *Title:* {chat_title}\n"
+        f"🏷️ *Title:* `{chat_title}`\n"
         f"📂 *Type:* `{chat_type}`\n\n"
         f"💡 To set this group for order & deposit notifications, send:\n`/setgroup {chat_id}`",
         parse_mode=ParseMode.MARKDOWN
