@@ -46,8 +46,26 @@ api_client = ShopAPIClient()
 payment_client = PaymentAPIClient()
 binance_client = BinanceAPIClient()
 
+ADMIN_ID = int(os.getenv("ADMIN_ID", "6575066703"))
+ASSISTANT_IDS = [8934679152]
+
+def is_super_admin(user_id: int) -> bool:
+    try:
+        return int(user_id) == int(ADMIN_ID)
+    except Exception:
+        return False
+
+def is_assistant(user_id: int) -> bool:
+    try:
+        return int(user_id) in ASSISTANT_IDS
+    except Exception:
+        return False
+
 def is_admin(user_id: int) -> bool:
-    return int(user_id) == int(ADMIN_ID)
+    return is_super_admin(user_id)
+
+def is_product_manager(user_id: int) -> bool:
+    return is_super_admin(user_id) or is_assistant(user_id)
 
 async def get_notification_group_id() -> int:
     stored = await database.get_setting("notification_group_id")
@@ -131,8 +149,10 @@ def main_menu_keyboard(user_id: int) -> InlineKeyboardMarkup:
         ],
         [InlineKeyboardButton("ℹ️ Help & Support", callback_data="nav_help")]
     ]
-    if is_admin(user_id):
+    if is_super_admin(user_id):
         buttons.append([InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin")])
+    elif is_assistant(user_id):
+        buttons.append([InlineKeyboardButton("📦 Assistant Stock Panel", callback_data="admin_custom_prods")])
     return InlineKeyboardMarkup(buttons)
 
 # --- HANDLERS ---
@@ -824,7 +844,8 @@ async def handle_admin_blocked_buyers_callback(query, context: ContextTypes.DEFA
     ])
     await query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(buttons))
 
-async def handle_admin_custom_products_callback(query, context: ContextTypes.DEFAULT_TYPE):
+async def handle_admin_custom_products_callback(update_or_query, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update_or_query.from_user.id if hasattr(update_or_query, "from_user") else update_or_query.effective_user.id
     prods = await database.get_custom_products(only_active=False)
     text = (
         "📦 *In-House Custom Products & Stock Manager*\n\n"
@@ -851,11 +872,16 @@ async def handle_admin_custom_products_callback(query, context: ContextTypes.DEF
     if not prods:
         text += "_No in-house custom products added yet._\n\n"
 
+    nav_back = InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin") if is_super_admin(user_id) else InlineKeyboardButton("🏠 Main Menu", callback_data="nav_main")
     buttons.append([
         InlineKeyboardButton("➕ Add New In-House Product", callback_data="admin_prompt_add_cust_prod"),
-        InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin")
+        nav_back
     ])
-    await query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(buttons))
+
+    if hasattr(update_or_query, "edit_message_text"):
+        await update_or_query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(buttons))
+    else:
+        await update_or_query.message.reply_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(buttons))
 
 async def handle_admin_backup_callback(query, context: ContextTypes.DEFAULT_TYPE):
     await query.answer("Generating backup files...")
@@ -1480,11 +1506,18 @@ async def handle_admin_router(update: Update, context: ContextTypes.DEFAULT_TYPE
     query = update.callback_query
     await query.answer()
     user_id = query.from_user.id
-    if not is_admin(user_id):
+    if not is_product_manager(user_id):
         await query.edit_message_text("❌ Unauthorized access.")
         return
 
     data = query.data
+
+    # If user is Assistant (8934679152), restrict them STRICTLY to products & stock only
+    if is_assistant(user_id) and not is_super_admin(user_id):
+        allowed_prefixes = ("admin_custom_prods", "admin_prompt_add_cust_prod", "admin_addstock_", "admin_viewstock_", "admin_delcust_")
+        if not any(data.startswith(p) for p in allowed_prefixes) and data != "nav_main":
+            await query.answer("❌ Permission Denied: You are only authorized to add products and manage stock.", show_alert=True)
+            return
 
     if data == "admin_panel":
         await show_admin_panel(query, context)
@@ -2911,8 +2944,8 @@ async def handle_user_text_input(update: Update, context: ContextTypes.DEFAULT_T
         )
         return
 
-    # ── Admin: Add In-House Custom Product (Text Input) ──
-    if context.user_data.get("waiting_for_admin_add_cust_prod") and is_admin(user.id):
+    # ── Admin/Assistant: Add In-House Custom Product (Text Input) ──
+    if context.user_data.get("waiting_for_admin_add_cust_prod") and is_product_manager(user.id):
         context.user_data["waiting_for_admin_add_cust_prod"] = False
         parts = text.split("|")
         if len(parts) < 2:
@@ -2934,6 +2967,13 @@ async def handle_user_text_input(update: Update, context: ContextTypes.DEFAULT_T
             return
 
         prod_id = await database.add_custom_product(name=name, price=price)
+        back_markup = [
+            [InlineKeyboardButton("➕ Add Stock Now", callback_data=f"admin_addstock_{prod_id}")],
+            [InlineKeyboardButton("📦 Custom Products", callback_data="admin_custom_prods")]
+        ]
+        if is_super_admin(user.id):
+            back_markup.append([InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin")])
+
         await update.message.reply_text(
             f"✅ *In-House Product Created Successfully!*\n\n"
             f"🆔 *Product ID:* `#{prod_id}`\n"
@@ -2941,16 +2981,12 @@ async def handle_user_text_input(update: Update, context: ContextTypes.DEFAULT_T
             f"💵 *Price:* `${price:.2f}` USD\n"
             f"📊 *Stock:* `0` (Tap **Add Stock** below to load accounts/keys)",
             parse_mode=ParseMode.MARKDOWN,
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("➕ Add Stock Now", callback_data=f"admin_addstock_{prod_id}")],
-                [InlineKeyboardButton("📦 Custom Products", callback_data="admin_custom_prods")],
-                [InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin")]
-            ])
+            reply_markup=InlineKeyboardMarkup(back_markup)
         )
         return
 
-    # ── Admin: Add Stock to Custom Product (Text Input) ──
-    if context.user_data.get("waiting_for_admin_add_cust_stock") and is_admin(user.id):
+    # ── Admin/Assistant: Add Stock to Custom Product (Text Input) ──
+    if context.user_data.get("waiting_for_admin_add_cust_stock") and is_product_manager(user.id):
         context.user_data["waiting_for_admin_add_cust_stock"] = False
         c_id = context.user_data.pop("admin_addstock_target_cid", None)
         if not c_id:
@@ -3001,7 +3037,7 @@ async def handle_user_text_input(update: Update, context: ContextTypes.DEFAULT_T
 
 async def addproduct_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    if not is_admin(user_id):
+    if not is_product_manager(user_id):
         await update.message.reply_text("❌ Unauthorized.")
         return
 
@@ -3027,14 +3063,14 @@ async def addproduct_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 async def customproducts_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    if not is_admin(user_id):
+    if not is_product_manager(user_id):
         await update.message.reply_text("❌ Unauthorized.")
         return
     await handle_admin_custom_products_callback(update, context)
 
 async def addstock_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    if not is_admin(user_id):
+    if not is_product_manager(user_id):
         await update.message.reply_text("❌ Unauthorized.")
         return
 
