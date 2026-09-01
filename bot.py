@@ -75,6 +75,46 @@ async def reload_assistants_cache():
     except Exception as e:
         logger.error(f"Error reloading assistants cache: {e}")
 
+def parse_raw_stock_input(raw_text: str) -> list[str]:
+    """Parse bulk raw stock input into individual accounts/keys.
+    Supports:
+    1. Numbered multi-line format (e.g. '1. email:pass:url \n Password - 123 \n 2. ...')
+    2. Blank line separated blocks/paragraphs
+    3. Standard single line (email:password)
+    """
+    raw_text = raw_text.strip()
+    if not raw_text:
+        return []
+
+    import re
+    # 1. Numbered format check: "1. ...", "2. ...", "1) ...", "[1] ..."
+    numbered_pattern = r'(?:^|\n)\s*(?:\d+[\.\)\:\-]|\[\d+\])\s+'
+    splits = re.split(numbered_pattern, raw_text)
+    if len(splits) > 1:
+        items = []
+        for s in splits:
+            s_clean = s.strip()
+            if s_clean:
+                lines = [l.strip() for l in s_clean.splitlines() if l.strip()]
+                if lines:
+                    items.append("\n".join(lines))
+        if len(items) >= 1 and (len(items) > 1 or raw_text.startswith(("1.", "1)", "[1]", "1-", "1:"))):
+            return items
+
+    # 2. Paragraph blocks separated by double blank lines
+    blocks = re.split(r'\n\s*\n+', raw_text)
+    if len(blocks) > 1:
+        cleaned_blocks = []
+        for b in blocks:
+            b_lines = [l.strip() for l in b.strip().splitlines() if l.strip()]
+            if b_lines:
+                cleaned_blocks.append("\n".join(b_lines))
+        if len(cleaned_blocks) > 1:
+            return cleaned_blocks
+
+    # 3. Simple single lines
+    return [l.strip() for l in raw_text.splitlines() if l.strip()]
+
 async def get_notification_group_id() -> int:
     stored = await database.get_setting("notification_group_id")
     if stored:
@@ -499,8 +539,11 @@ async def handle_buy_checkout(update: Update, context: ContextTypes.DEFAULT_TYPE
     keys_formatted = ""
     if delivered_keys:
         keys_formatted = "\n\n🔑 *Delivered Keys / Credentials:*\n"
-        for k in delivered_keys:
-            keys_formatted += f"`{k}`\n"
+        for i, k in enumerate(delivered_keys, 1):
+            if len(delivered_keys) > 1:
+                keys_formatted += f"\n📦 *Item #{i}:*\n```{k}```\n"
+            else:
+                keys_formatted += f"```{k}```\n"
     else:
         keys_formatted = "\n\n⚠️ No keys returned. Contact support with your order ID."
 
@@ -1862,11 +1905,17 @@ async def handle_admin_router(update: Update, context: ContextTypes.DEFAULT_TYPE
         context.user_data["waiting_for_admin_add_cust_stock"] = True
         await query.edit_message_text(
             f"➕ *Add Stock for `{prod_name}`* (ID `#{c_id}`)\n\n"
-            "Send your stock accounts/credentials/keys line-by-line (one per line):\n\n"
-            "Example:\n"
-            "`user1@gmail.com:pass1234`\n"
-            "`user2@gmail.com:pass5678`\n"
-            "`user3@gmail.com:pass9012`",
+            "Send your stock accounts/credentials in your next message.\n\n"
+            "📌 *Supported Formats:*\n"
+            "• **Numbered multi-line accounts** (e.g. Netflix, Prime, Disney+):\n"
+            "  `1. email@outlook.com:pass:webmail_url`\n"
+            "  `Password - Spidey026`\n\n"
+            "  `2. email2@outlook.com:pass:webmail_url`\n"
+            "  `Password - Spidey026`\n\n"
+            "• **Standard single-line accounts**:\n"
+            "  `user1@gmail.com:pass1234`\n"
+            "  `user2@gmail.com:pass5678`\n\n"
+            "⚡ _Each account will be parsed perfectly and delivered automatically to buyers!_",
             parse_mode=ParseMode.MARKDOWN,
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="admin_custom_prods")]])
         )
@@ -1876,11 +1925,18 @@ async def handle_admin_router(update: Update, context: ContextTypes.DEFAULT_TYPE
         prod_name = prod.get("name") if prod else f"Product #{c_id}"
         preview = await database.get_custom_product_available_preview(c_id, limit=5)
         stock_cnt = prod.get("stock_count", 0) if prod else 0
-        stock_text = "\n".join([f"`{s}`" for s in preview]) if preview else "_No stock items loaded._"
+        if preview:
+            items_fmt = []
+            for idx, s in enumerate(preview, 1):
+                items_fmt.append(f"*Item #{idx}:*\n```{s}```")
+            stock_text = "\n\n".join(items_fmt)
+        else:
+            stock_text = "_No stock items loaded._"
+
         await query.edit_message_text(
             f"👁️ *Stock Preview for `{prod_name}`*\n\n"
             f"📊 *Total Available:* `{stock_cnt}` items\n\n"
-            f"*Sample Next Items to be Delivered:*\n{stock_text}",
+            f"*Sample Next Items to be Delivered:*\n\n{stock_text}",
             parse_mode=ParseMode.MARKDOWN,
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("➕ Add More Stock", callback_data=f"admin_addstock_{c_id}")],
@@ -3201,9 +3257,11 @@ async def handle_user_text_input(update: Update, context: ContextTypes.DEFAULT_T
         c_id = context.user_data.pop("admin_addstock_target_cid", None)
         if not c_id:
             await update.message.reply_text("❌ Session expired. Please select product again from Custom Products menu.")
+        stock_lines = parse_raw_stock_input(text)
+        if not stock_lines:
+            await update.message.reply_text("❌ No valid stock items found in your message.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Custom Products", callback_data="admin_custom_prods")]]))
             return
 
-        stock_lines = [l.strip() for l in text.split("\n") if l.strip()]
         added_count = await database.add_custom_product_stock(c_id, stock_lines)
         prod = await database.get_custom_product(c_id)
         prod_name = prod.get("name") if prod else f"Product #{c_id}"
