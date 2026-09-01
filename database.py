@@ -1474,8 +1474,6 @@ async def get_assistants() -> list[dict]:
 
 async def is_assistant_in_db(user_id: int) -> bool:
     """Check if a user is an authorized assistant in DB."""
-    if int(user_id) == 8934679152:
-        return True
     if USE_POSTGRES:
         try:
             pool = await get_pg_pool()

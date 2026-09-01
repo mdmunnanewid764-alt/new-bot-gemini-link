@@ -996,26 +996,25 @@ async def handle_admin_manage_assistants_callback(update_or_query, context: Cont
         "Users in this list can **ONLY** create in-house products and add stock. They CANNOT see your balances, Binance keys, deposit verification, or settings.\n\n"
     )
     buttons = []
-    all_uids = [a["user_id"] for a in assts]
-    if 8934679152 not in all_uids:
-        text += (
-            "👤 *Assistant:* User `8934679152` (Default)\n"
-            "   🆔 ID: `8934679152` | 🔒 Role: `Product & Stock Only`\n"
-            "━━━━━━━━━━━━━━━━━━━\n"
-        )
     for a in assts:
         u_id = a["user_id"]
         u_name = f"@{a['username']}" if a.get("username") else (a.get("first_name") or f"User {u_id}")
         text += (
-            f"👤 *Assistant:* {u_name}\n"
-            f"   🆔 ID: `{u_id}` | 🔒 Role: `Product & Stock Only`\n"
+            f"👤 *Assistant:* {u_name} (`{u_id}`)\n"
+            f"   🔒 Role: `Product & Stock Only`\n"
             f"   📅 Added: `{str(a.get('added_at', ''))[:19]}`\n"
             "━━━━━━━━━━━━━━━━━━━\n"
         )
-        buttons.append([InlineKeyboardButton(f"🗑️ Remove {u_name}", callback_data=f"admin_delasst_{u_id}")])
+        buttons.append([InlineKeyboardButton(f"🗑️ Remove Assistant ({u_name[:14]})", callback_data=f"admin_delasst_{u_id}")])
+
+    if not assts:
+        text += "🟢 _No assistants are currently active._\n\n"
 
     buttons.append([
-        InlineKeyboardButton("➕ Add New Assistant", callback_data="admin_prompt_add_assistant"),
+        InlineKeyboardButton("➕ Add Assistant", callback_data="admin_prompt_add_assistant"),
+        InlineKeyboardButton("🗑️ Remove Assistant", callback_data="admin_prompt_del_assistant"),
+    ])
+    buttons.append([
         InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin")
     ])
 
@@ -1666,6 +1665,15 @@ async def handle_admin_router(update: Update, context: ContextTypes.DEFAULT_TYPE
             "👨‍💼 *Add New Product Assistant*\n\n"
             "Send the **Username** (e.g. `@john_doe`) or **User ID** (e.g. `8934679152`) of the user you want to add as Assistant:\n\n"
             "_Note: The user will ONLY have permission to create in-house products and add stock._",
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="admin_manage_assistants")]])
+        )
+    elif data == "admin_prompt_del_assistant":
+        context.user_data["waiting_for_admin_del_assistant"] = True
+        await query.edit_message_text(
+            "🗑️ *Remove an Assistant*\n\n"
+            "Send the **Username** (e.g. `@john_doe`) or **User ID** (e.g. `8934679152`) of the assistant you want to remove:\n\n"
+            "⚡ _Their permission to create products and add stock will be revoked immediately._",
             parse_mode=ParseMode.MARKDOWN,
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="admin_manage_assistants")]])
         )
@@ -3097,6 +3105,33 @@ async def handle_user_text_input(update: Update, context: ContextTypes.DEFAULT_T
             f"👤 *Name:* {u_info.get('first_name')}\n"
             f"🆔 *User ID:* `{target_uid}`\n\n"
             "🔒 *Role & Permissions:* This user can **ONLY** create products (`/addproduct`) and load stock (`/addstock`). They have no access to finances or other admin settings.",
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("👨‍💼 Manage Assistants", callback_data="admin_manage_assistants")],
+                [InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin")]
+            ])
+        )
+        return
+
+    # ── Admin: Remove Assistant (Text Input) ──
+    if context.user_data.get("waiting_for_admin_del_assistant") and is_super_admin(user.id):
+        context.user_data["waiting_for_admin_del_assistant"] = False
+        target_uid = await database.get_user_id_by_identifier(text.strip())
+        if not target_uid:
+            await update.message.reply_text(
+                f"❌ User `{text.strip()}` not found in database.",
+                parse_mode=ParseMode.MARKDOWN,
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("👨‍💼 Manage Assistants", callback_data="admin_manage_assistants")]])
+            )
+            return
+
+        await database.remove_assistant(target_uid)
+        await reload_assistants_cache()
+        u_info = await database.get_user_info(target_uid)
+        u_label = f"@{u_info['username']}" if u_info.get("username") else (u_info.get("first_name") or f"ID {target_uid}")
+
+        await update.message.reply_text(
+            f"✅ *Assistant Permissions Revoked for {u_label}* (`{target_uid}`).\n\nThis user is now a regular customer.",
             parse_mode=ParseMode.MARKDOWN,
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("👨‍💼 Manage Assistants", callback_data="admin_manage_assistants")],
