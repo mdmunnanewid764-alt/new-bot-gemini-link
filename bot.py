@@ -693,26 +693,29 @@ async def show_admin_panel(update_or_query, context: ContextTypes.DEFAULT_TYPE):
         ],
         [
             InlineKeyboardButton("💎 Pricing & Profit", callback_data="admin_margins"),
+            InlineKeyboardButton("🔘 Hide / Show Products", callback_data="admin_manage_api_prods"),
+        ],
+        [
             InlineKeyboardButton(toggle_btn_text, callback_data="admin_toggle_catalog_filter"),
-        ],
-        [
             InlineKeyboardButton("📍 Deposit Wallets", callback_data="admin_wallets"),
+        ],
+        [
             InlineKeyboardButton("💸 Balance Manager", callback_data="admin_manage_balance"),
-        ],
-        [
             InlineKeyboardButton("📋 Pending Deposits", callback_data="admin_deposits"),
+        ],
+        [
             InlineKeyboardButton("📜 All Deposits History", callback_data="admin_all_deposits"),
-        ],
-        [
             InlineKeyboardButton("👥 Deposited Users", callback_data="admin_deposited_users"),
+        ],
+        [
             InlineKeyboardButton("🚫 Blocked Buyers", callback_data="admin_blocked_buyers"),
-        ],
-        [
             InlineKeyboardButton("🔄 Sync Products", callback_data="admin_sync"),
-            InlineKeyboardButton("📢 Broadcast Message", callback_data="admin_broadcast"),
         ],
         [
+            InlineKeyboardButton("📢 Broadcast Message", callback_data="admin_broadcast"),
             InlineKeyboardButton("💾 Download Backup", callback_data="admin_backup"),
+        ],
+        [
             InlineKeyboardButton("🏠 Main Menu", callback_data="nav_main"),
         ],
     ]
@@ -876,6 +879,48 @@ async def handle_admin_custom_products_callback(update_or_query, context: Contex
     buttons.append([
         InlineKeyboardButton("➕ Add New In-House Product", callback_data="admin_prompt_add_cust_prod"),
         nav_back
+    ])
+
+    if hasattr(update_or_query, "edit_message_text"):
+        await update_or_query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(buttons))
+    else:
+        await update_or_query.message.reply_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(buttons))
+
+async def handle_admin_manage_api_products_callback(update_or_query, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update_or_query.from_user.id if hasattr(update_or_query, "from_user") else update_or_query.effective_user.id
+    if not is_super_admin(user_id):
+        if hasattr(update_or_query, "answer"):
+            await update_or_query.answer("❌ Super Admin only.", show_alert=True)
+        return
+
+    prods = await database.get_all_synced_products_for_admin()
+    text = (
+        "🔘 *Manage Supplier API Products (Hide / Show)*\n\n"
+        "Here you can turn ANY product from the Supplier API **ON** or **OFF** individually.\n\n"
+        "• 🟢 **ACTIVE:** Visible in the bot catalog and can be purchased by users.\n"
+        "• 🔴 **HIDDEN / OFF:** Completely hidden from users in the catalog.\n\n"
+    )
+    buttons = []
+    for p in prods:
+        p_id = p["id"]
+        name = p["name"]
+        is_en = p.get("is_enabled", 1)
+        status_icon = "🟢 ACTIVE" if is_en == 1 else "🔴 HIDDEN / OFF"
+        btn_label = f"🔴 Turn OFF (#{p_id})" if is_en == 1 else f"🟢 Turn ON (#{p_id})"
+
+        text += (
+            f"{'🟢' if is_en == 1 else '🔴'} *ID `#{p_id}`:* {name}\n"
+            f"   Status: `{status_icon}`\n"
+            f"━━━━━━━━━━━━━━━━━━━\n"
+        )
+        buttons.append([InlineKeyboardButton(btn_label, callback_data=f"admin_togprod_{p_id}")])
+
+    if not prods:
+        text += "_No API products synchronized yet._\n\n"
+
+    buttons.append([
+        InlineKeyboardButton("🔄 Refresh List", callback_data="admin_manage_api_prods"),
+        InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin")
     ])
 
     if hasattr(update_or_query, "edit_message_text"):
@@ -1548,6 +1593,14 @@ async def handle_admin_router(update: Update, context: ContextTypes.DEFAULT_TYPE
     elif data.startswith("admin_setwallet_"):
         net = data.replace("admin_setwallet_", "")
         await handle_admin_setwallet_callback(query, context, net)
+    elif data == "admin_manage_api_prods":
+        await handle_admin_manage_api_products_callback(query, context)
+    elif data.startswith("admin_togprod_"):
+        p_id = int(data.replace("admin_togprod_", ""))
+        res = await database.toggle_synced_product_status(p_id)
+        st_icon = "🟢 ACTIVE (Visible)" if res["is_enabled"] == 1 else "🔴 OFF (Hidden)"
+        await query.answer(f"{res['name']} is now {st_icon}!", show_alert=True)
+        await handle_admin_manage_api_products_callback(query, context)
     elif data == "admin_margins":
         await handle_admin_margins_callback(query, context)
     elif data == "admin_toggle_catalog_filter":
@@ -3165,6 +3218,30 @@ async def blockedusers_command(update: Update, context: ContextTypes.DEFAULT_TYP
         return
     await handle_admin_blocked_buyers_callback(update, context)
 
+async def toggleproduct_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if not is_super_admin(user_id):
+        await update.message.reply_text("❌ Unauthorized. Super Admin only.")
+        return
+
+    if not context.args:
+        await update.message.reply_text("⚠️ Usage: `/toggleproduct <product_id>` (e.g. `/toggleproduct 9`)", parse_mode=ParseMode.MARKDOWN)
+        return
+
+    try:
+        p_id = int(context.args[0].strip().lstrip("#"))
+    except ValueError:
+        await update.message.reply_text("❌ Invalid Product ID.")
+        return
+
+    res = await database.toggle_synced_product_status(p_id)
+    st_str = "🟢 *ENABLED (Visible in Shop)*" if res["is_enabled"] == 1 else "🔴 *DISABLED (Hidden from Shop)*"
+    await update.message.reply_text(
+        f"✅ Product **{res['name']}** (ID `#{p_id}`) status updated:\n\n{st_str}",
+        parse_mode=ParseMode.MARKDOWN,
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔘 View All Products", callback_data="admin_manage_api_prods")]])
+    )
+
 async def setbinancekey_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if not is_admin(user_id):
@@ -3709,6 +3786,7 @@ def main():
     app.add_handler(CommandHandler("addproduct", addproduct_command))
     app.add_handler(CommandHandler("addstock", addstock_command))
     app.add_handler(CommandHandler(["customproducts", "inhouseproducts"], customproducts_command))
+    app.add_handler(CommandHandler(["toggleproduct", "hideproduct", "showproduct"], toggleproduct_command))
 
     # Callbacks
     app.add_handler(CallbackQueryHandler(handle_navigation, pattern=r"^nav_"))

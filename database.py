@@ -1322,4 +1322,61 @@ async def purchase_custom_product_stock(product_id: int, user_id: int, quantity:
         await db.commit()
     return delivered
 
+async def get_all_synced_products_for_admin() -> list[dict]:
+    """Retrieve all API-synced products including disabled/hidden ones for Admin control."""
+    if USE_POSTGRES:
+        try:
+            pool = await get_pg_pool()
+            async with pool.acquire() as conn:
+                rows = await conn.fetch("""
+                    SELECT supplier_product_id as id, name, sell_price, stock_count, in_stock, is_enabled
+                    FROM products_synced
+                    ORDER BY is_enabled DESC, supplier_product_id ASC
+                """)
+                return [dict(r) for r in rows]
+        except Exception as e:
+            logger.error(f"PG get_all_synced_products_for_admin error: {e}")
+
+    import aiosqlite
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute("""
+            SELECT supplier_product_id as id, name, sell_price, stock_count, in_stock, is_enabled
+            FROM products_synced
+            ORDER BY is_enabled DESC, supplier_product_id ASC
+        """) as cursor:
+            rows = await cursor.fetchall()
+            return [dict(r) for r in rows]
+
+async def toggle_synced_product_status(supplier_product_id: int) -> dict:
+    """Toggle a synced product between Enabled (1 - Visible) and Disabled (0 - Hidden from Users)."""
+    current_status = 1
+    prod_name = f"Product #{supplier_product_id}"
+    if USE_POSTGRES:
+        try:
+            pool = await get_pg_pool()
+            async with pool.acquire() as conn:
+                row = await conn.fetchrow("SELECT name, is_enabled FROM products_synced WHERE supplier_product_id = $1", int(supplier_product_id))
+                if row:
+                    prod_name = row["name"]
+                    current_status = row["is_enabled"]
+                new_status = 0 if current_status == 1 else 1
+                await conn.execute("UPDATE products_synced SET is_enabled = $1 WHERE supplier_product_id = $2", new_status, int(supplier_product_id))
+                return {"id": supplier_product_id, "name": prod_name, "is_enabled": new_status}
+        except Exception as e:
+            logger.error(f"PG toggle_synced_product_status error: {e}")
+
+    import aiosqlite
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute("SELECT name, is_enabled FROM products_synced WHERE supplier_product_id = ?", (int(supplier_product_id),)) as cursor:
+            row = await cursor.fetchone()
+            if row:
+                prod_name = row["name"]
+                current_status = row["is_enabled"]
+        new_status = 0 if current_status == 1 else 1
+        await db.execute("UPDATE products_synced SET is_enabled = ? WHERE supplier_product_id = ?", (new_status, int(supplier_product_id)))
+        await db.commit()
+    return {"id": supplier_product_id, "name": prod_name, "is_enabled": new_status}
+
 
