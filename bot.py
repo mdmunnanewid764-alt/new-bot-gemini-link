@@ -2070,6 +2070,28 @@ async def handle_user_text_input(update: Update, context: ContextTypes.DEFAULT_T
                     method=label,
                     ref_id=trade_no
                 )
+                
+                # Send instant notification to Admin
+                try:
+                    admin_success_msg = (
+                        "💰 *Deposit Auto-Verified & Credited!*\n\n"
+                        f"👤 *User:* {user.first_name} (@{user.username or 'N/A'})\n"
+                        f"🆔 *User ID:* `{user.id}`\n"
+                        f"💵 *Amount Credited:* `+${credit_amount:.2f}` USD\n"
+                        f"🌐 *Network / Method:* `{label}`\n"
+                        f"🆔 *Trade No:* `{trade_no}`\n"
+                        f"🔗 *TxHash / TxID:* `{tx_hash}`\n"
+                        f"💳 *User New Balance:* `${new_bal:.2f}` USD\n"
+                        f"📅 *Date & Time:* `{datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')}`"
+                    )
+                    await context.bot.send_message(
+                        chat_id=ADMIN_ID,
+                        text=admin_success_msg,
+                        parse_mode=ParseMode.MARKDOWN
+                    )
+                except Exception as e:
+                    logger.error(f"Error sending auto-deposit notification to admin: {e}")
+
                 await update.message.reply_text(
                     f"🎉 *Deposit Auto-Verified & Credited!*\n\n"
                     f"🆔 *Trade No:* `{trade_no}`\n"
@@ -2091,9 +2113,9 @@ async def handle_user_text_input(update: Update, context: ContextTypes.DEFAULT_T
                 f"🆔 *Trade No:* `{trade_no}`\n"
                 f"💵 *Amount:* `${amount:.2f}` USDT\n"
                 f"🌐 *Network:* `{label}`\n"
-                f"🔗 *TxHash:* `{tx_hash}`\n\n"
+                f"🔗 *TxHash / ID:* `{tx_hash}`\n\n"
                 "⏳ *Status:* `Pending Verification`\n"
-                "⚡ Your deposit will be credited as soon as it is confirmed on the blockchain!",
+                "⚡ Your deposit will be credited as soon as it is confirmed on the blockchain / verified by admin!",
                 parse_mode=ParseMode.MARKDOWN,
                 reply_markup=InlineKeyboardMarkup([
                     [InlineKeyboardButton("🛒 Browse Shop", callback_data="nav_products")],
@@ -2101,26 +2123,31 @@ async def handle_user_text_input(update: Update, context: ContextTypes.DEFAULT_T
                 ])
             )
 
-            # Notify Admin immediately with 1-click Approval Buttons
+            # Notify Admin immediately with full User Info & 1-click Approval Buttons
             try:
+                curr_user_bal = await database.get_user_balance(user.id)
                 explorer_url = get_explorer_url(network, tx_hash)
                 admin_notif = (
-                    f"📥 *New Crypto Deposit Pending Review!*\n\n"
+                    "📥 *New User Deposit Submitted — Pending Review!*\n\n"
                     f"👤 *User:* {user.first_name} (@{user.username or 'N/A'})\n"
                     f"🆔 *User ID:* `{user.id}`\n"
-                    f"💵 *Amount:* `${amount:.2f}` USDT\n"
+                    f"💵 *Deposit Amount:* `${amount:.2f}` USDT\n"
                     f"🌐 *Network:* `{label}`\n"
                     f"🆔 *Trade No:* `{trade_no}`\n"
-                    f"🔗 *TxHash:* `{tx_hash}`\n\n"
-                    f"🔍 [View On-Chain Transaction]({explorer_url})"
+                    f"🔗 *TxHash / Binance TxID:* `{tx_hash}`\n"
+                    f"💳 *Current User Balance:* `${curr_user_bal:.2f}` USD\n"
+                    f"📅 *Date & Time:* `{datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')}`\n\n"
+                    "⚡ _Check your Binance/Wallet and tap Approve below:_"
                 )
                 admin_btns = [
                     [
-                        InlineKeyboardButton(f"✅ Approve (${amount:.2f})", callback_data=f"dep_appr_{trade_no}"),
+                        InlineKeyboardButton(f"✅ Approve (+${amount:.2f})", callback_data=f"dep_appr_{trade_no}"),
                         InlineKeyboardButton("❌ Reject", callback_data=f"dep_rej_{trade_no}")
-                    ],
-                    [InlineKeyboardButton("🔍 Open Explorer", url=explorer_url)]
+                    ]
                 ]
+                if len(tx_hash) > 20 and all(c in "0123456789abcdefABCDEFxX" for c in tx_hash):
+                    admin_btns.append([InlineKeyboardButton("🔍 Open Explorer", url=explorer_url)])
+
                 await context.bot.send_message(
                     chat_id=ADMIN_ID,
                     text=admin_notif,
