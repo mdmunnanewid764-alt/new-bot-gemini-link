@@ -600,14 +600,15 @@ async def show_admin_panel(update_or_query, context: ContextTypes.DEFAULT_TYPE):
             InlineKeyboardButton("🟡 Binance Live Balance", callback_data="admin_binance_balance"),
         ],
         [
-            InlineKeyboardButton("🔑 Shop API Key", callback_data="admin_key"),
+            InlineKeyboardButton("🟡 Binance Live Deposits", callback_data="admin_binance_deposits"),
             InlineKeyboardButton("🔐 Binance API Keys", callback_data="admin_binance_keys"),
         ],
         [
-            InlineKeyboardButton("📊 Sales Stats", callback_data="admin_stats"),
-            InlineKeyboardButton("💎 Gemini Pricing & Profit", callback_data="admin_margins"),
+            InlineKeyboardButton("🔑 Shop API Key", callback_data="admin_key"),
+            InlineKeyboardButton("💎 Pricing & Profit", callback_data="admin_margins"),
         ],
         [
+            InlineKeyboardButton("📊 Sales Stats", callback_data="admin_stats"),
             InlineKeyboardButton(toggle_btn_text, callback_data="admin_toggle_catalog_filter"),
         ],
         [
@@ -805,11 +806,103 @@ async def handle_admin_binance_balance_callback(query, context: ContextTypes.DEF
     buttons = [
         [
             InlineKeyboardButton("🔄 Refresh Balance", callback_data="admin_binance_balance"),
-            InlineKeyboardButton("🔐 Edit API Keys", callback_data="admin_binance_keys")
+            InlineKeyboardButton("🟡 View Live Deposits", callback_data="admin_binance_deposits"),
         ],
-        [InlineKeyboardButton("🔙 Admin Panel", callback_data="nav_admin")]
+        [
+            InlineKeyboardButton("🔐 Edit API Keys", callback_data="admin_binance_keys"),
+            InlineKeyboardButton("🔙 Admin Panel", callback_data="nav_admin")
+        ]
     ]
-    await query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(buttons))
+    if hasattr(query, "edit_message_text"):
+        await query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(buttons))
+    else:
+        await query.message.reply_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(buttons))
+
+async def handle_admin_binance_deposits_callback(query, context: ContextTypes.DEFAULT_TYPE):
+    if hasattr(query, "answer"):
+        await query.answer("Fetching live Binance deposits...")
+    res = await binance_client.get_live_deposit_history(limit=10)
+
+    if not res.get("success"):
+        err_msg = res.get("error", "Unknown error")
+        text = (
+            "🟡 *Binance Live Crypto Deposits*\n\n"
+            f"❌ *Could not fetch deposits:*\n`{err_msg}`\n\n"
+            "Make sure your Binance API key and Secret key are configured and have permissions enabled."
+        )
+        buttons = [
+            [InlineKeyboardButton("🔄 Try Again", callback_data="admin_binance_deposits")],
+            [InlineKeyboardButton("🔐 Binance Keys Setup", callback_data="admin_binance_keys")],
+            [InlineKeyboardButton("🔙 Admin Panel", callback_data="nav_admin")]
+        ]
+        if hasattr(query, "edit_message_text"):
+            await query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(buttons))
+        else:
+            await query.message.reply_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(buttons))
+        return
+
+    deposits = res.get("deposits", [])
+    text = (
+        f"🟡 *Binance Live Deposits (Last {len(deposits)})*\n\n"
+        "⚡ _Live crypto deposits directly fetched from your Binance account:_\n\n"
+    )
+
+    status_labels = {
+        0: "⏳ Pending",
+        1: "🟢 Success",
+        6: "⏳ Credited / Confirming",
+        7: "🔴 Rejected"
+    }
+
+    buttons = []
+    for d in deposits:
+        coin = d.get("coin", "USDT")
+        amt = float(d.get("amount", 0.0))
+        net = d.get("network", "CRYPTO")
+        st_code = d.get("status", 1)
+        st_text = status_labels.get(st_code, f"⚪ Status {st_code}")
+        tx = d.get("txId", "")
+        tx_short = f"`{tx[:8]}...{tx[-6:]}`" if len(tx) > 16 else f"`{tx}`"
+        addr = d.get("address", "")
+        addr_short = f"`{addr[:8]}...{addr[-6:]}`" if len(addr) > 16 else f"`{addr}`"
+
+        time_ms = d.get("insertTime") or d.get("completeTime") or 0
+        if time_ms:
+            time_str = datetime.utcfromtimestamp(time_ms / 1000).strftime("%Y-%m-%d %H:%M:%S UTC")
+        else:
+            time_str = "N/A"
+
+        transfer_type = " (Internal)" if d.get("transferType") == 1 else ""
+
+        text += (
+            f"━━━━━━━━━━━━━━━━━━━\n"
+            f"💵 *+{amt:.4f} {coin}* ({net}){transfer_type} | {st_text}\n"
+            f"🔗 TxID: {tx_short}\n"
+            f"📍 Addr: {addr_short}\n"
+            f"🕒 Time: `{time_str}`\n"
+        )
+
+        if len(tx) > 20 and all(c in "0123456789abcdefABCDEFxX" for c in tx):
+            exp_url = get_explorer_url(net, tx)
+            buttons.append([InlineKeyboardButton(f"🔍 Explorer: +{amt:.2f} {coin} ({net})", url=exp_url)])
+
+    if not deposits:
+        text += "_No recent deposit history found on Binance._\n"
+    else:
+        text += "━━━━━━━━━━━━━━━━━━━\n"
+
+    buttons.append([
+        InlineKeyboardButton("🔄 Refresh Deposits", callback_data="admin_binance_deposits"),
+        InlineKeyboardButton("🟡 Live Balances", callback_data="admin_binance_balance"),
+    ])
+    buttons.append([
+        InlineKeyboardButton("🔙 Admin Panel", callback_data="nav_admin")
+    ])
+
+    if hasattr(query, "edit_message_text"):
+        await query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(buttons))
+    else:
+        await query.message.reply_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(buttons))
 
 async def handle_admin_binance_keys_callback(query, context: ContextTypes.DEFAULT_TYPE):
     b_key, b_sec = await binance_client.get_credentials()
@@ -1257,6 +1350,12 @@ async def handle_admin_router(update: Update, context: ContextTypes.DEFAULT_TYPE
         await handle_admin_deposited_users_callback(query, context)
     elif data == "admin_balance":
         await handle_admin_balance_callback(query, context)
+    elif data == "admin_binance_deposits":
+        await handle_admin_binance_deposits_callback(query, context)
+    elif data == "admin_binance_balance":
+        await handle_admin_binance_balance_callback(query, context)
+    elif data == "admin_binance_keys":
+        await handle_admin_binance_keys_callback(query, context)
     elif data == "admin_stats":
         await handle_admin_stats_callback(query, context)
     elif data == "admin_wallets":
@@ -2575,6 +2674,20 @@ async def setbinanceproxy_command(update: Update, context: ContextTypes.DEFAULT_
         else:
             await update.message.reply_text(f"⚠️ *Proxy saved, but test failed:*\n`{res.get('error')}`", parse_mode=ParseMode.MARKDOWN)
 
+async def binancedeposits_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if not is_admin(user_id):
+        await update.message.reply_text("❌ Unauthorized.")
+        return
+    await handle_admin_binance_deposits_callback(update, context)
+
+async def binancebalance_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if not is_admin(user_id):
+        await update.message.reply_text("❌ Unauthorized.")
+        return
+    await handle_admin_binance_balance_callback(update, context)
+
 
 async def margins_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -3043,6 +3156,8 @@ def main():
     app.add_handler(CommandHandler("checkbalance", checkbalance_command))
     app.add_handler(CommandHandler("toggleshop", toggleshop_command))
     app.add_handler(CommandHandler("deposits", deposits_command))
+    app.add_handler(CommandHandler(["binancedeposits", "bdeposits"], binancedeposits_command))
+    app.add_handler(CommandHandler(["binancebalance", "bbalance"], binancebalance_command))
     app.add_handler(CommandHandler("balance", balance_command))
     app.add_handler(CommandHandler("stats", stats_command))
     app.add_handler(CommandHandler("broadcast", broadcast_command))

@@ -181,34 +181,66 @@ class BinanceAPIClient:
 
         return {"success": False, "error": last_error}
 
-    async def get_recent_deposits(self, coin: str = "USDT", limit: int = 10) -> List[Dict[str, Any]]:
-        """Fetch recent crypto deposits history into Binance account."""
+    async def get_live_deposit_history(self, limit: int = 10, coin: Optional[str] = None) -> Dict[str, Any]:
+        """Fetch latest live deposits from Binance account."""
         api_key, api_secret = await self.get_credentials()
         if not api_key or not api_secret:
-            return []
+            return {
+                "success": False,
+                "error": "Binance API Key and Secret Key are not configured."
+            }
 
-        headers = {"X-MBX-APIKEY": api_key}
+        headers = {
+            "X-MBX-APIKEY": api_key,
+            "Content-Type": "application/json"
+        }
+
         proxy = await self.get_proxy()
-        client_kwargs = {"timeout": 12.0}
+        client_kwargs = {"timeout": 15.0}
         if proxy:
             client_kwargs["proxy"] = proxy
+
+        last_error = "Unknown error"
 
         async with httpx.AsyncClient(**client_kwargs) as client:
             for base_url in self.endpoints:
                 try:
                     offset = await self.get_server_time_offset(client, base_url)
                     timestamp = int(time.time() * 1000) + offset
-                    query = f"coin={coin}&status=1&limit={limit}&timestamp={timestamp}&recvWindow=60000"
+                    params_list = [f"timestamp={timestamp}", "recvWindow=60000"]
+                    if coin:
+                        params_list.append(f"coin={coin.upper()}")
+                    if limit:
+                        params_list.append(f"limit={limit}")
+
+                    query = "&".join(params_list)
                     signature = self._sign(query, api_secret)
                     url = f"{base_url}/sapi/v1/capital/deposit/hisrec?{query}&signature={signature}"
 
                     res = await client.get(url, headers=headers)
                     if res.status_code == 200:
-                        return res.json()
+                        return {
+                            "success": True,
+                            "deposits": res.json()
+                        }
                     elif res.status_code in (418, 429):
-                        logger.warning(f"Deposit check on {base_url} hit limit ({res.status_code}). Trying next endpoint...")
+                        last_error = f"Binance IP limit on {base_url} ({res.status_code})"
                         continue
+                    else:
+                        err_msg = res.json().get("msg", res.text)
+                        return {
+                            "success": False,
+                            "error": f"Binance API Error ({res.status_code}): {err_msg}"
+                        }
                 except Exception as e:
-                    logger.warning(f"Error fetching deposit from {base_url}: {e}")
+                    last_error = str(e)
                     continue
+
+        return {"success": False, "error": last_error}
+
+    async def get_recent_deposits(self, coin: str = "USDT", limit: int = 10) -> List[Dict[str, Any]]:
+        """Fetch recent crypto deposits history into Binance account."""
+        res = await self.get_live_deposit_history(limit=limit, coin=coin)
+        if res.get("success"):
+            return res.get("deposits", [])
         return []
