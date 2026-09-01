@@ -414,10 +414,16 @@ async def get_stats() -> dict:
                 u_count = await conn.fetchval("SELECT COUNT(*) FROM users") or 0
                 row = await conn.fetchrow("SELECT COUNT(*), COALESCE(SUM(total), 0) FROM orders_local")
                 o_count, total_sales = row[0], float(row[1]) if row else 0.0
+                total_users_bal = await conn.fetchval("SELECT COALESCE(SUM(balance), 0.0) FROM user_balances") or 0.0
+                users_with_bal = await conn.fetchval("SELECT COUNT(*) FROM user_balances WHERE balance > 0") or 0
+                total_deposited = await conn.fetchval("SELECT COALESCE(SUM(amount), 0.0) FROM deposits WHERE status = 'PAID'") or 0.0
                 return {
                     "total_users": u_count,
                     "total_orders": o_count,
-                    "total_sales": total_sales
+                    "total_sales": total_sales,
+                    "total_users_balance": float(total_users_bal),
+                    "users_with_balance": users_with_bal,
+                    "total_deposited": float(total_deposited)
                 }
         except Exception as e:
             logger.error(f"PG get_stats error: {e}")
@@ -429,11 +435,25 @@ async def get_stats() -> dict:
         async with db.execute("SELECT COUNT(*), COALESCE(SUM(total), 0) FROM orders_local") as c2:
             row = await c2.fetchone()
             o_count, total_sales = row[0], row[1]
+        async with db.execute("SELECT COALESCE(SUM(balance), 0.0) FROM user_balances") as c3:
+            total_users_bal = (await c3.fetchone())[0]
+        async with db.execute("SELECT COUNT(*) FROM user_balances WHERE balance > 0") as c4:
+            users_with_bal = (await c4.fetchone())[0]
+        async with db.execute("SELECT COALESCE(SUM(amount), 0.0) FROM deposits WHERE status = 'PAID'") as c5:
+            total_deposited = (await c5.fetchone())[0]
         return {
             "total_users": u_count,
             "total_orders": o_count,
-            "total_sales": total_sales
+            "total_sales": total_sales,
+            "total_users_balance": float(total_users_bal or 0.0),
+            "users_with_balance": users_with_bal,
+            "total_deposited": float(total_deposited or 0.0)
         }
+
+async def get_total_users_balance() -> tuple[float, int]:
+    """Returns (total_combined_balance, count_of_users_with_balance)."""
+    stats = await get_stats()
+    return (stats.get("total_users_balance", 0.0), stats.get("users_with_balance", 0))
 
 async def set_product_margin(product_key: str, margin: float):
     if USE_POSTGRES:

@@ -578,10 +578,13 @@ async def show_admin_panel(update_or_query, context: ContextTypes.DEFAULT_TYPE):
     bep20 = await database.get_setting("wallet_bep20") or "NOT SET"
     catalog_gemini_only = (await database.get_setting("catalog_gemini_only", "1") == "1")
     store_mode_label = "💎 Only Gemini Products" if catalog_gemini_only else "🌐 All Synced Products"
+    total_users_bal = stats.get("total_users_balance", 0.0)
+    users_with_bal = stats.get("users_with_balance", 0)
 
     text = (
         "⚙️ *Admin Control Dashboard*\n\n"
         f"👥 *Total Users:* `{stats['total_users']}`\n"
+        f"💳 *Total User Balances:* `${total_users_bal:.2f}` USD (`{users_with_bal}` with balance)\n"
         f"🛍️ *Total Orders:* `{stats['total_orders']}`\n"
         f"💰 *Total Sales:* `${stats['total_sales']:.2f}` USD\n\n"
         f"🏪 *Store Visibility:* `{store_mode_label}`\n"
@@ -639,8 +642,11 @@ async def show_admin_panel(update_or_query, context: ContextTypes.DEFAULT_TYPE):
         await update_or_query.message.reply_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=markup)
 
 async def handle_admin_manage_balance_callback(query, context: ContextTypes.DEFAULT_TYPE):
+    total_bal, users_count = await database.get_total_users_balance()
     text = (
         "💸 *User Balance Management*\n\n"
+        f"💳 *Total Users Combined Balance:* `${total_bal:.2f}` USD\n"
+        f"👥 *Users Holding Balance:* `{users_count}` users\n\n"
         "You can manage any user's balance by *Username* (e.g. `@username`) or *Telegram ID*.\n\n"
         "Choose an action below:"
     )
@@ -956,20 +962,34 @@ async def handle_admin_balance_callback(query, context: ContextTypes.DEFAULT_TYP
     await query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(buttons))
 
 async def handle_admin_stats_callback(query, context: ContextTypes.DEFAULT_TYPE):
+    if hasattr(query, "answer"):
+        await query.answer()
     stats = await database.get_stats()
+    total_users_bal = stats.get("total_users_balance", 0.0)
+    users_with_bal = stats.get("users_with_balance", 0)
+    total_deposited = stats.get("total_deposited", 0.0)
+
     text = (
         "📊 *Bot Sales & Performance Statistics*\n\n"
         f"👥 *Total Registered Users:* `{stats['total_users']}`\n"
+        f"💳 *Total User Balances:* `${total_users_bal:.2f}` USD (`{users_with_bal}` users with balance)\n"
+        f"📥 *Total Paid Deposits:* `${total_deposited:.2f}` USD\n"
         f"📦 *Total Orders Processed:* `{stats['total_orders']}`\n"
         f"💵 *Total Sales Revenue:* `${stats['total_sales']:.2f}` USD"
     )
     buttons = [
         [
             InlineKeyboardButton("🔄 Refresh", callback_data="admin_stats"),
+            InlineKeyboardButton("👥 Deposited Users", callback_data="admin_deposited_users")
+        ],
+        [
             InlineKeyboardButton("🔙 Admin Panel", callback_data="nav_admin")
         ]
     ]
-    await query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(buttons))
+    if hasattr(query, "edit_message_text"):
+        await query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(buttons))
+    else:
+        await query.message.reply_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(buttons))
 
 async def handle_admin_wallets_callback(query, context: ContextTypes.DEFAULT_TYPE):
     bep20 = await database.get_setting("wallet_bep20") or "NOT SET"
@@ -3107,6 +3127,13 @@ async def toggleshop_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
         parse_mode=ParseMode.MARKDOWN,
         reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin")]])
     )
+
+async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if not is_admin(user_id):
+        await update.message.reply_text("❌ Unauthorized.")
+        return
+    await handle_admin_stats_callback(update, context)
 
 async def noop_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.callback_query.answer()
