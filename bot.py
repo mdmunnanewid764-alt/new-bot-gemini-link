@@ -451,39 +451,50 @@ async def handle_buy_checkout(update: Update, context: ContextTypes.DEFAULT_TYPE
                 status=status,
                 delivered_keys=delivered_keys
             )
+        except Exception as e:
+            logger.error(f"Order creation failed: {e}")
+            # Refund deducted balance
+            await database.add_user_balance(user.id, total_price)
+            await query.edit_message_text(
+                f"❌ *Order Failed:*\n`{e}`\n\nYour balance has been refunded.",
+                parse_mode=ParseMode.MARKDOWN,
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to Products", callback_data="nav_products")]])
+            )
+            return
 
-        # Get updated user balance
-        new_balance = await database.get_user_balance(user.id)
+    # Get updated user balance
+    new_balance = await database.get_user_balance(user.id)
 
-        # Format Delivered Keys
-        keys_formatted = ""
-        if delivered_keys:
-            keys_formatted = "\n\n🔑 *Delivered Keys / Credentials:*\n"
-            for k in delivered_keys:
-                keys_formatted += f"`{k}`\n"
-        else:
-            keys_formatted = "\n\n⚠️ No keys returned. Contact support with your order ID."
+    # Format Delivered Keys
+    keys_formatted = ""
+    if delivered_keys:
+        keys_formatted = "\n\n🔑 *Delivered Keys / Credentials:*\n"
+        for k in delivered_keys:
+            keys_formatted += f"`{k}`\n"
+    else:
+        keys_formatted = "\n\n⚠️ No keys returned. Contact support with your order ID."
 
-        success_text = (
-            f"🎉 *Order Completed Successfully!*\n\n"
-            f"🆔 *Order ID:* `{order_id}`\n"
-            f"📦 *Product:* {prod_name}\n"
-            f"🔢 *Quantity:* {qty}\n"
-            f"💰 *Total Paid:* `${total_price:.2f}` USD\n"
-            f"💳 *Remaining Balance:* `${new_balance:.2f}` USD\n"
-            f"⚡ *Status:* `{status}`"
-            f"{keys_formatted}\n\n"
-            "💡 *Tip:* Tap on the delivered keys above to copy them instantly!"
-        )
+    success_text = (
+        f"🎉 *Order Completed Successfully!*\n\n"
+        f"🆔 *Order ID:* `{order_id}`\n"
+        f"📦 *Product:* {prod_name}\n"
+        f"🔢 *Quantity:* {qty}\n"
+        f"💰 *Total Paid:* `${total_price:.2f}` USD\n"
+        f"💳 *Remaining Balance:* `${new_balance:.2f}` USD\n"
+        f"⚡ *Status:* `{status}`"
+        f"{keys_formatted}\n\n"
+        "💡 *Tip:* Tap on the delivered keys above to copy them instantly!"
+    )
 
-        buttons = [
-            [InlineKeyboardButton("📜 View My Orders", callback_data="nav_orders")],
-            [InlineKeyboardButton("🛒 Continue Shopping", callback_data="nav_products")]
-        ]
+    buttons = [
+        [InlineKeyboardButton("📜 View My Orders", callback_data="nav_orders")],
+        [InlineKeyboardButton("🛒 Continue Shopping", callback_data="nav_products")]
+    ]
 
-        await query.edit_message_text(success_text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(buttons))
+    await query.edit_message_text(success_text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(buttons))
 
-        # Broadcast to Notification Group (-1003721268860)
+    # Broadcast to Notification Group (-1003721268860)
+    try:
         await broadcast_group_order(
             bot=context.bot,
             buyer_name=user.first_name or "Buyer",
@@ -494,35 +505,21 @@ async def handle_buy_checkout(update: Update, context: ContextTypes.DEFAULT_TYPE
             qty=qty,
             total_price=total_price
         )
-
-        # Notify Admin of new sale
-        try:
-            admin_msg = (
-                f"🛍️ *New Order Notification*\n\n"
-                f"👤 *Buyer:* {user.first_name} (@{user.username or 'N/A'})\n"
-                f"🆔 *User ID:* `{user.id}`\n"
-                f"📦 *Product:* {prod_name}\n"
-                f"🔢 *Qty:* {qty} | 💰 *Total:* ${total_price:.2f}"
-            )
-            await context.bot.send_message(chat_id=ADMIN_ID, text=admin_msg, parse_mode=ParseMode.MARKDOWN)
-        except Exception:
-            pass
-
     except Exception as e:
-        # Auto-refund user balance on API failure
-        await database.add_user_balance(user.id, total_price)
-        logger.error(f"Purchase error (refunded ${total_price:.2f}): {e}")
-        
-        error_msg = str(e)
-        if isinstance(e, ShopAPIError):
-            error_msg = e.message
+        logger.warning(f"Failed to broadcast order to group: {e}")
 
-        error_text = f"❌ *Purchase Failed*\n\n{error_msg}\n\n🟢 *Your balance of `${total_price:.2f}` USD has been refunded.*"
-        buttons = [
-            [InlineKeyboardButton("🔄 Try Again", callback_data=f"qty_{prod_id}_{qty}")],
-            [InlineKeyboardButton("🔙 Back to Catalog", callback_data="nav_products")]
-        ]
-        await query.edit_message_text(error_text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(buttons))
+    # Notify Admin of new sale
+    try:
+        admin_msg = (
+            f"🛍️ *New Order Notification*\n\n"
+            f"👤 *Buyer:* {user.first_name} (@{user.username or 'N/A'})\n"
+            f"🆔 *User ID:* `{user.id}`\n"
+            f"📦 *Product:* {prod_name}\n"
+            f"🔢 *Qty:* {qty} | 💰 *Total:* ${total_price:.2f}"
+        )
+        await context.bot.send_message(chat_id=ADMIN_ID, text=admin_msg, parse_mode=ParseMode.MARKDOWN)
+    except Exception:
+        pass
 
 async def show_account_info(query, context: ContextTypes.DEFAULT_TYPE):
     user = query.from_user
