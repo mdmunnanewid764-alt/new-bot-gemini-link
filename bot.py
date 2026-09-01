@@ -855,14 +855,16 @@ async def handle_admin_user_detail_callback(query, context: ContextTypes.DEFAULT
     u_info = await database.get_user_info(target_uid)
     bal = float(u_info.get("balance", 0.0))
     orders = await database.get_user_orders(target_uid, limit=5)
-    u_name = f"@{u_info['username']}" if u_info.get("username") else "N/A"
+    raw_uname = u_info.get('username')
+    u_name = f"`@{raw_uname}`" if raw_uname else "`N/A`"
+    first_name_str = u_info.get('first_name') or 'N/A'
     is_blocked = await database.is_user_buying_blocked(target_uid)
     buying_status = "🔴 RESTRICTED (Cannot Buy)" if is_blocked else "🟢 ACTIVE (Allowed)"
 
     text = (
         f"👤 *User Profile & Quick Controls*\n\n"
         f"🆔 *User ID:* `{target_uid}`\n"
-        f"👤 *Name:* {u_info.get('first_name') or 'N/A'}\n"
+        f"👤 *Name:* `{first_name_str}`\n"
         f"🌐 *Username:* {u_name}\n"
         f"💳 *Current Balance:* `${bal:.2f}` USD\n"
         f"🛡️ *Buying Status:* `{buying_status}`\n"
@@ -2707,7 +2709,8 @@ async def handle_user_text_input(update: Update, context: ContextTypes.DEFAULT_T
 
         new_bal = await database.add_user_balance(target_uid, amt)
         u_info = await database.get_user_info(target_uid)
-        u_label = f"@{u_info['username']}" if u_info.get("username") else (u_info.get("first_name") or f"ID {target_uid}")
+        raw_uname = u_info.get('username')
+        u_label = f"`@{raw_uname}`" if raw_uname else (f"`{u_info.get('first_name')}`" if u_info.get("first_name") else f"`ID {target_uid}`")
         
         # Broadcast to Notification Group (-1003721268860)
         await broadcast_group_deposit(
@@ -2773,7 +2776,8 @@ async def handle_user_text_input(update: Update, context: ContextTypes.DEFAULT_T
 
         new_bal = await database.force_deduct_user_balance(target_uid, amt)
         u_info = await database.get_user_info(target_uid)
-        u_label = f"@{u_info['username']}" if u_info.get("username") else (u_info.get("first_name") or f"ID {target_uid}")
+        raw_uname = u_info.get('username')
+        u_label = f"`@{raw_uname}`" if raw_uname else (f"`{u_info.get('first_name')}`" if u_info.get("first_name") else f"`ID {target_uid}`")
         await update.message.reply_text(
             f"✅ *Balance Deducted Successfully!*\n\n"
             f"👤 *User:* {u_label} (`{target_uid}`)\n"
@@ -2827,7 +2831,8 @@ async def handle_user_text_input(update: Update, context: ContextTypes.DEFAULT_T
 
         new_bal = await database.set_user_balance(target_uid, amt)
         u_info = await database.get_user_info(target_uid)
-        u_label = f"@{u_info['username']}" if u_info.get("username") else (u_info.get("first_name") or f"ID {target_uid}")
+        raw_uname = u_info.get('username')
+        u_label = f"`@{raw_uname}`" if raw_uname else (f"`{u_info.get('first_name')}`" if u_info.get("first_name") else f"`ID {target_uid}`")
         await update.message.reply_text(
             f"✅ *Exact Balance Set Successfully!*\n\n"
             f"👤 *User:* {u_label} (`{target_uid}`)\n"
@@ -2855,7 +2860,8 @@ async def handle_user_text_input(update: Update, context: ContextTypes.DEFAULT_T
             return
         new_bal = await database.set_user_balance(target_uid, amt)
         u_info = await database.get_user_info(target_uid)
-        u_label = f"@{u_info['username']}" if u_info.get("username") else (u_info.get("first_name") or f"ID {target_uid}")
+        raw_uname = u_info.get('username')
+        u_label = f"`@{raw_uname}`" if raw_uname else (f"`{u_info.get('first_name')}`" if u_info.get("first_name") else f"`ID {target_uid}`")
         await update.message.reply_text(
             f"✅ *Exact Balance Updated!*\n\n"
             f"👤 *User:* {u_label} (`{target_uid}`)\n"
@@ -2883,12 +2889,17 @@ async def handle_user_text_input(update: Update, context: ContextTypes.DEFAULT_T
 
         u_info = await database.get_user_info(target_uid)
         orders = await database.get_user_orders(target_uid, limit=5)
+        raw_uname = u_info.get('username')
+        u_name_display = f"`@{raw_uname}`" if raw_uname else "`N/A`"
+        f_name_display = u_info.get('first_name') or 'N/A'
+        bal = float(u_info.get('balance', 0.0))
+
         text_res = (
             f"🔍 *User Information*\n\n"
             f"🆔 *User ID:* `{target_uid}`\n"
-            f"👤 *Name:* {u_info.get('first_name') or 'N/A'}\n"
-            f"🌐 *Username:* @{u_info.get('username') or 'N/A'}\n"
-            f"💳 *Bot Balance:* `${u_info.get('balance', 0.0):.2f}` USD\n"
+            f"👤 *Name:* `{f_name_display}`\n"
+            f"🌐 *Username:* {u_name_display}\n"
+            f"💳 *Bot Balance:* `${bal:.2f}` USD\n"
             f"🛍️ *Recent Orders:* `{len(orders)}`\n"
         )
         await update.message.reply_text(
@@ -3167,7 +3178,8 @@ async def handle_user_text_input(update: Update, context: ContextTypes.DEFAULT_T
 
         await database.block_user_buying(target_uid)
         u_info = await database.get_user_info(target_uid)
-        u_label = f"@{u_info['username']}" if u_info.get("username") else (u_info.get("first_name") or f"ID {target_uid}")
+        raw_uname = u_info.get('username')
+        u_label = f"`@{raw_uname}`" if raw_uname else (f"`{u_info.get('first_name')}`" if u_info.get("first_name") else f"`ID {target_uid}`")
         bal = float(u_info.get("balance", 0.0))
         await update.message.reply_text(
             f"🚫 *User Buying Permissions Successfully BLOCKED!*\n\n"
@@ -3177,7 +3189,7 @@ async def handle_user_text_input(update: Update, context: ContextTypes.DEFAULT_T
             "🔒 *Status:* When this user deposits, balance will be added normally. BUT when they attempt to purchase any product, the order will be stopped and they will be instructed to contact Admin support.",
             parse_mode=ParseMode.MARKDOWN,
             reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton(f"⚙️ Manage {u_label}", callback_data=f"admin_usr_{target_uid}")],
+                [InlineKeyboardButton("⚙️ Manage User", callback_data=f"admin_usr_{target_uid}")],
                 [InlineKeyboardButton("🚫 Blocked Buyers List", callback_data="admin_blocked_buyers")],
                 [InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin")]
             ])
@@ -3203,11 +3215,12 @@ async def handle_user_text_input(update: Update, context: ContextTypes.DEFAULT_T
             first_name=u_info.get("first_name")
         )
         await reload_assistants_cache()
-        u_label = f"@{u_info['username']}" if u_info.get("username") else (u_info.get("first_name") or f"ID {target_uid}")
+        raw_uname = u_info.get('username')
+        u_label = f"`@{raw_uname}`" if raw_uname else (f"`{u_info.get('first_name')}`" if u_info.get("first_name") else f"`ID {target_uid}`")
 
         await update.message.reply_text(
             f"🎉 *User {u_label} Successfully Added as Assistant!*\n\n"
-            f"👤 *Name:* {u_info.get('first_name')}\n"
+            f"👤 *Name:* `{u_info.get('first_name')}`\n"
             f"🆔 *User ID:* `{target_uid}`\n\n"
             "🔒 *Role & Permissions:* This user can **ONLY** create products (`/addproduct`) and load stock (`/addstock`). They have no access to finances or other admin settings.",
             parse_mode=ParseMode.MARKDOWN,
@@ -3233,7 +3246,8 @@ async def handle_user_text_input(update: Update, context: ContextTypes.DEFAULT_T
         await database.remove_assistant(target_uid)
         await reload_assistants_cache()
         u_info = await database.get_user_info(target_uid)
-        u_label = f"@{u_info['username']}" if u_info.get("username") else (u_info.get("first_name") or f"ID {target_uid}")
+        raw_uname = u_info.get('username')
+        u_label = f"`@{raw_uname}`" if raw_uname else (f"`{u_info.get('first_name')}`" if u_info.get("first_name") else f"`ID {target_uid}`")
 
         await update.message.reply_text(
             f"✅ *Assistant Permissions Revoked for {u_label}* (`{target_uid}`).\n\nThis user is now a regular customer.",
