@@ -91,9 +91,12 @@ async def notify_new_products_alert(bot, new_products: List[Dict[str, Any]], res
         for p in new_products:
             p_id = p["id"]
             name = p["name"]
-            supplier_p = float(p.get("sell_price", 0.0))
-            margin = margins.get(str(p_id), default_margin)
-            sell_p = round(supplier_p + margin, 2)
+            if p.get("is_custom") or (isinstance(p_id, int) and p_id >= 90000):
+                sell_p = float(p.get("sell_price", 0.0))
+            else:
+                supplier_p = float(p.get("sell_price", 0.0))
+                margin = margins.get(str(p_id), default_margin)
+                sell_p = round(supplier_p + margin, 2)
             stock = p.get("stock_count")
             stock_str = f"`{stock}` in stock" if stock is not None else "`Available`"
 
@@ -110,9 +113,12 @@ async def notify_new_products_alert(bot, new_products: List[Dict[str, Any]], res
         for p in restocked_products:
             p_id = p["id"]
             name = p["name"]
-            supplier_p = float(p.get("sell_price", 0.0))
-            margin = margins.get(str(p_id), default_margin)
-            sell_p = round(supplier_p + margin, 2)
+            if p.get("is_custom") or (isinstance(p_id, int) and p_id >= 90000):
+                sell_p = float(p.get("sell_price", 0.0))
+            else:
+                supplier_p = float(p.get("sell_price", 0.0))
+                margin = margins.get(str(p_id), default_margin)
+                sell_p = round(supplier_p + margin, 2)
             stock = p.get("stock_count")
             added_cnt = p.get("added_count")
             if added_cnt and added_cnt > 0:

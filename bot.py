@@ -2963,12 +2963,31 @@ async def handle_user_text_input(update: Update, context: ContextTypes.DEFAULT_T
         prod_name = prod.get("name") if prod else f"Product #{c_id}"
         total_stock = prod.get("stock_count", added_count) if prod else added_count
 
+        # Broadcast restock alert to Notification Group and all registered users
+        if added_count > 0 and prod:
+            try:
+                restocked_item = [{
+                    "id": 90000 + c_id,
+                    "name": prod_name,
+                    "sell_price": float(prod.get("price", 0.0)),
+                    "stock_count": total_stock,
+                    "added_count": added_count,
+                    "is_custom": True
+                }]
+                await catalog_sync.notify_new_products_alert(
+                    bot=context.bot,
+                    new_products=[],
+                    restocked_products=restocked_item
+                )
+            except Exception as e:
+                logger.error(f"Error broadcasting custom stock alert: {e}")
+
         await update.message.reply_text(
-            f"🎉 *Stock Added Successfully!*\n\n"
+            f"🎉 *Stock Added Successfully & Broadcasted!*\n\n"
             f"📦 *Product:* {prod_name} (ID `#{c_id}`)\n"
             f"➕ *Added Items:* `{added_count}` accounts/keys\n"
             f"📊 *Total In Stock:* `{total_stock}` available\n\n"
-            "Customers can now purchase this product from the shop instantly!",
+            "📢 *Notification sent:* All bot users and notification group have been informed of this new stock!",
             parse_mode=ParseMode.MARKDOWN,
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("👁️ Preview Stock", callback_data=f"admin_viewstock_{c_id}")],
@@ -3012,6 +3031,40 @@ async def customproducts_command(update: Update, context: ContextTypes.DEFAULT_T
         await update.message.reply_text("❌ Unauthorized.")
         return
     await handle_admin_custom_products_callback(update, context)
+
+async def addstock_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if not is_admin(user_id):
+        await update.message.reply_text("❌ Unauthorized.")
+        return
+
+    if not context.args:
+        await update.message.reply_text("⚠️ Usage: `/addstock <product_id>` (e.g. `/addstock 1`)", parse_mode=ParseMode.MARKDOWN)
+        return
+
+    try:
+        c_id = int(context.args[0].strip().lstrip("#"))
+    except ValueError:
+        await update.message.reply_text("❌ Invalid Product ID. Must be a number.")
+        return
+
+    prod = await database.get_custom_product(c_id)
+    if not prod:
+        await update.message.reply_text(f"❌ Custom Product `#{c_id}` not found. Type `/customproducts` to view all products.", parse_mode=ParseMode.MARKDOWN)
+        return
+
+    context.user_data["admin_addstock_target_cid"] = c_id
+    context.user_data["waiting_for_admin_add_cust_stock"] = True
+    await update.message.reply_text(
+        f"➕ *Add Stock for `{prod['name']}`* (ID `#{c_id}`)\n\n"
+        "Send your stock accounts/credentials line-by-line in your next message (e.g. `email:pass`):\n\n"
+        "Example:\n"
+        "`user1@gmail.com:pass1234`\n"
+        "`user2@gmail.com:pass5678`\n\n"
+        "⚡ _As soon as stock is added, all bot users & notification group will be alerted!_",
+        parse_mode=ParseMode.MARKDOWN,
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="admin_custom_prods")]])
+    )
 
 async def blockbuying_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -3618,6 +3671,7 @@ def main():
     app.add_handler(CommandHandler(["unblockbuying", "unblockbuyer"], unblockbuying_command))
     app.add_handler(CommandHandler(["blockedusers", "blockedbuyers"], blockedusers_command))
     app.add_handler(CommandHandler("addproduct", addproduct_command))
+    app.add_handler(CommandHandler("addstock", addstock_command))
     app.add_handler(CommandHandler(["customproducts", "inhouseproducts"], customproducts_command))
 
     # Callbacks
