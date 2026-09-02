@@ -544,9 +544,9 @@ async def handle_buy_checkout(update: Update, context: ContextTypes.DEFAULT_TYPE
                 customer_name=customer_label
             )
 
-            order_data = order_res.get("order", {})
-            delivered_keys = order_res.get("delivered_keys", [])
-            order_id = order_data.get("id", "N/A")
+            order_data = order_res.get("order", {}) if isinstance(order_res.get("order"), dict) else {}
+            delivered_keys = order_res.get("delivered_keys") or order_data.get("delivered_keys", [])
+            order_id = order_res.get("order_code") or order_data.get("order_code") or order_data.get("id") or f"ORD-{int(time.time())}"
             status = order_data.get("status", "delivered")
 
             # Save order in local DB

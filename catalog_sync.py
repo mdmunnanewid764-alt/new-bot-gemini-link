@@ -229,9 +229,9 @@ async def sync_catalog_now(api_client: Optional[ShopAPIClient] = None, bot = Non
             continue
         synced_ids.append(p_id)
         name = p.get("name", "Product")
-        price = float(p.get("sell_price", 0.0))
+        price = float(p.get("unit_price") if p.get("unit_price") is not None else (p.get("sell_price") or p.get("list_price") or 0.0))
         stock = p.get("stock_count")
-        in_stock = 1 if p.get("in_stock", True) else 0
+        in_stock = 1 if (p.get("in_stock") is True or p.get("in_stock") == 1 or (stock is not None and stock > 0)) else 0
         curr_stock = stock if stock is not None else (1 if in_stock == 1 else 0)
 
         db_prod = existing_products.get(p_id)
