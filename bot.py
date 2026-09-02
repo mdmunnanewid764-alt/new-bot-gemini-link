@@ -632,20 +632,36 @@ async def handle_buy_checkout(update: Update, context: ContextTypes.DEFAULT_TYPE
     except Exception as e:
         logger.warning(f"Failed to broadcast order to group: {e}")
 
-    # Notify Admin of new sale
+    # Notify Admin of new sale with complete copy of delivered credentials
     try:
-        raw_uname = f"`@{user.username}`" if user.username else "`N/A`"
-        raw_fname = f"`{user.first_name}`" if user.first_name else "`Buyer`"
+        raw_uname = f"@{user.username}" if user.username else "N/A"
+        raw_fname = user.first_name if user.first_name else "Buyer"
+        
+        # Format keys for admin copy
+        admin_keys_text = ""
+        if delivered_keys:
+            admin_keys_text = "\n\n🔑 *Delivered Item(s) [Admin Copy]:*\n"
+            for i, k in enumerate(delivered_keys, 1):
+                if len(delivered_keys) > 1:
+                    admin_keys_text += f"\n📦 *Item #{i}:*\n```{k}```\n"
+                else:
+                    admin_keys_text += f"```{k}```\n"
+        else:
+            admin_keys_text = "\n\n⚠️ _No keys were delivered._"
+
         admin_msg = (
-            f"🛍️ *New Order Notification*\n\n"
-            f"👤 *Buyer:* {raw_fname} ({raw_uname})\n"
+            f"🛍️ *New Order Notification (Admin Copy)*\n\n"
+            f"👤 *Buyer:* `{raw_fname}` (`{raw_uname}`)\n"
             f"🆔 *User ID:* `{user.id}`\n"
+            f"🏷️ *Order ID:* `{order_id}`\n"
             f"📦 *Product:* `{prod_name}`\n"
-            f"🔢 *Qty:* `{qty}` | 💰 *Total:* `${total_price:.2f}` USD"
+            f"🔢 *Qty:* `{qty}` | 💰 *Total:* `${total_price:.2f}` USD\n"
+            f"💳 *Buyer Remaining Balance:* `${new_balance:.2f}` USD"
+            f"{admin_keys_text}"
         )
         await context.bot.send_message(chat_id=ADMIN_ID, text=admin_msg, parse_mode=ParseMode.MARKDOWN)
-    except Exception:
-        pass
+    except Exception as e:
+        logger.error(f"Error sending admin order copy: {e}")
 
 async def show_account_info(query, context: ContextTypes.DEFAULT_TYPE):
     user = query.from_user

@@ -310,14 +310,26 @@ async def handle_create_order(request: web.Request) -> web.Response:
             if _tg_bot:
                 import bot as bot_module
                 admin_id = int(os.getenv("ADMIN_ID", "6575066703"))
+                admin_keys_text = ""
+                if delivered_keys:
+                    admin_keys_text = "\n\n🔑 *Delivered Item(s) [Admin Copy]:*\n"
+                    for i, k in enumerate(delivered_keys, 1):
+                        if len(delivered_keys) > 1:
+                            admin_keys_text += f"\n📦 *Item #{i}:*\n```{k}```\n"
+                        else:
+                            admin_keys_text += f"```{k}```\n"
+                else:
+                    admin_keys_text = "\n\n⚠️ _No keys were delivered._"
+
                 notif_msg = (
-                    f"⚡ *New API Order Processed!*\n\n"
+                    f"⚡ *New API Order Processed (Admin Copy)*\n\n"
                     f"👤 *API User:* `{api_user.get('first_name')}` (`@{api_user.get('username') or 'N/A'}`)\n"
                     f"🆔 *User ID:* `{user_id}`\n"
                     f"🏷️ *Order Code:* `{order_code}`\n"
                     f"📦 *Product:* `{p['name']}`\n"
                     f"🔢 *Qty:* `{quantity}` | 💰 *Total:* `${total_price:.2f}` USD\n"
                     f"💳 *User Remaining Balance:* `${new_bal:.2f}` USD"
+                    f"{admin_keys_text}"
                 )
                 import asyncio
                 from telegram.constants import ParseMode
