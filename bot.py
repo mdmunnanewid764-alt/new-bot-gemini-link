@@ -1090,7 +1090,7 @@ async def handle_admin_custom_products_callback(update_or_query, context: Contex
             f"━━━━━━━━━━━━━━━━━━━\n"
         )
         row_btns = [
-            InlineKeyboardButton(f"➕ Add Stock (#{c_id})", callback_data=f"admin_addstock_{c_id}"),
+            InlineKeyboardButton(f"➕ Add Stock (#{c_id})", callback_data=f"admin_addstock_menu_{c_id}"),
             InlineKeyboardButton(f"👁️ View Stock", callback_data=f"admin_viewstock_{c_id}"),
         ]
         if is_super_admin(user_id):
@@ -1102,7 +1102,10 @@ async def handle_admin_custom_products_callback(update_or_query, context: Contex
 
     nav_back = InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin") if is_super_admin(user_id) else InlineKeyboardButton("🏠 Main Menu", callback_data="nav_main")
     buttons.append([
-        InlineKeyboardButton("➕ Add New In-House Product", callback_data="admin_prompt_add_cust_prod"),
+        InlineKeyboardButton("📦 Add Single Product (Step-by-Step)", callback_data="admin_add_single_step1"),
+    ])
+    buttons.append([
+        InlineKeyboardButton("⚡ Quick Add (<Name> | <Price>)", callback_data="admin_prompt_add_cust_prod"),
         nav_back
     ])
 
@@ -1871,7 +1874,7 @@ async def handle_admin_router(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     # If user is Assistant, restrict them STRICTLY to adding products & stock only
     if is_assistant(user_id) and not is_super_admin(user_id):
-        allowed_prefixes = ("admin_custom_prods", "admin_prompt_add_cust_prod", "admin_addstock_", "admin_viewstock_")
+        allowed_prefixes = ("admin_custom_prods", "admin_prompt_add_cust_prod", "admin_add_single_step1", "admin_addstock_", "admin_viewstock_")
         if not any(data.startswith(p) for p in allowed_prefixes) and data != "nav_main":
             await query.answer("❌ Permission Denied: You are only authorized to add products and load stock. Deleting products is restricted to Super Admin.", show_alert=True)
             return
@@ -2099,10 +2102,24 @@ async def handle_admin_router(update: Update, context: ContextTypes.DEFAULT_TYPE
         )
     elif data == "admin_custom_prods":
         await handle_admin_custom_products_callback(query, context)
+    elif data == "admin_add_single_step1":
+        context.user_data.pop("single_prod_name", None)
+        context.user_data.pop("single_prod_price", None)
+        context.user_data["waiting_for_single_prod_name"] = True
+        await query.edit_message_text(
+            "🏷️ *Step 1 of 3: Enter Product Name*\n\n"
+            "Send the name/title of the product in your next message:\n\n"
+            "_Examples:_\n"
+            "• `Netflix 4K Ultra HD 1 Month Private Account`\n"
+            "• `Gemini Advanced 1 Year Subscription`\n"
+            "• `ChatGPT Plus Private Login`",
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="admin_custom_prods")]])
+        )
     elif data == "admin_prompt_add_cust_prod":
         context.user_data["waiting_for_admin_add_cust_prod"] = True
         await query.edit_message_text(
-            "📦 *Add New In-House Product*\n\n"
+            "📦 *Quick Add In-House Product*\n\n"
             "Send the Product Name and Price in this format:\n"
             "`<Product Name> | <Price>`\n\n"
             "Examples:\n"
@@ -2112,8 +2129,54 @@ async def handle_admin_router(update: Update, context: ContextTypes.DEFAULT_TYPE
             parse_mode=ParseMode.MARKDOWN,
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="admin_custom_prods")]])
         )
-    elif data.startswith("admin_addstock_"):
-        c_id = int(data.replace("admin_addstock_", ""))
+    elif data.startswith("admin_addstock_menu_"):
+        c_id = int(data.replace("admin_addstock_menu_", ""))
+        prod = await database.get_custom_product(c_id)
+        if not prod:
+            await query.answer("❌ Product not found.", show_alert=True)
+            return
+        if not is_super_admin(user_id) and prod.get("created_by") and int(prod["created_by"]) != int(user_id):
+            await query.answer("❌ Permission Denied: You can only manage stock for products created by you.", show_alert=True)
+            return
+
+        prod_name = prod.get("name") if prod else f"Product #{c_id}"
+        await query.edit_message_text(
+            f"➕ *Add Stock for `{prod_name}`* (ID `#{c_id}`)\n\n"
+            "Select how you would like to load stock:\n\n"
+            "1️⃣ **Single Item / Large Text**:\n"
+            "Your entire message (including all lines, passwords, instructions, cookies) will be saved as **1 single product unit**.\n\n"
+            "2️⃣ **Batch / Multi-Line Stock Loader**:\n"
+            "Load multiple accounts separated by lines, numbers (`1.`, `2.`), or dividers (`---`).",
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("📝 Add Single Item (Large Text)", callback_data=f"admin_addstock_single_{c_id}")],
+                [InlineKeyboardButton("📑 Batch Add Multiple Accounts", callback_data=f"admin_addstock_batch_{c_id}")],
+                [InlineKeyboardButton("🔙 Back to Products", callback_data="admin_custom_prods")]
+            ])
+        )
+    elif data.startswith("admin_addstock_single_"):
+        c_id = int(data.replace("admin_addstock_single_", ""))
+        prod = await database.get_custom_product(c_id)
+        if not prod:
+            await query.answer("❌ Product not found.", show_alert=True)
+            return
+        if not is_super_admin(user_id) and prod.get("created_by") and int(prod["created_by"]) != int(user_id):
+            await query.answer("❌ Permission Denied: You can only manage stock for products created by you.", show_alert=True)
+            return
+
+        prod_name = prod.get("name") if prod else f"Product #{c_id}"
+        context.user_data["admin_single_stock_cid"] = c_id
+        context.user_data["waiting_for_admin_add_single_stock"] = True
+        await query.edit_message_text(
+            f"📝 *Add Single Item for `{prod_name}`* (ID `#{c_id}`)\n\n"
+            "Paste your complete credentials/text in your next message.\n\n"
+            "💡 _Whatever text, links, passwords, or paragraphs you send will be saved as **1 single stock unit** and delivered to the buyer._",
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="admin_custom_prods")]])
+        )
+    elif data.startswith("admin_addstock_batch_") or data.startswith("admin_addstock_"):
+        prefix = "admin_addstock_batch_" if data.startswith("admin_addstock_batch_") else "admin_addstock_"
+        c_id = int(data.replace(prefix, ""))
         prod = await database.get_custom_product(c_id)
         if not prod:
             await query.answer("❌ Product not found.", show_alert=True)
@@ -2126,21 +2189,14 @@ async def handle_admin_router(update: Update, context: ContextTypes.DEFAULT_TYPE
         context.user_data["admin_addstock_target_cid"] = c_id
         context.user_data["waiting_for_admin_add_cust_stock"] = True
         await query.edit_message_text(
-            f"➕ *Add Stock for `{prod_name}`* (ID `#{c_id}`)\n\n"
-            "Send your stock in **any custom format you want** in your next message:\n\n"
+            f"📑 *Batch Stock Loader for `{prod_name}`* (ID `#{c_id}`)\n\n"
+            "Send your accounts in **any format you want** in your next message:\n\n"
             "📌 *Supported Formats:*\n"
-            "1️⃣ **Numbered Multi-line Accounts**:\n"
-            "  `1. email@domain.com:webmail_url`\n"
-            "  `Password - Spidey026`\n\n"
-            "2️⃣ **Separator Lines (`---`, `===`, `***`)**:\n"
-            "  `Email: a@b.com`\n"
-            "  `Pass: 123`\n"
-            "  `---`\n"
-            "  `Email: c@d.com`\n"
-            "  `Pass: 456`\n\n"
-            "3️⃣ **Blank-Line Separated Blocks** (leave an empty line between accounts)\n\n"
-            "4️⃣ **Standard single-line accounts** (`email:pass`)\n\n"
-            "⚡ _All accounts will be cleanly delivered to buyers automatically!_",
+            "1️⃣ Numbered Multi-line (`1. email:pass`, `2. email:pass`)\n"
+            "2️⃣ Separator Lines (`---`, `===`, `***`)\n"
+            "3️⃣ Blank-Line Separated Blocks\n"
+            "4️⃣ Standard single-line accounts (`email:pass`)\n\n"
+            "⚡ _Each block will be parsed and loaded into available stock!_",
             parse_mode=ParseMode.MARKDOWN,
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="admin_custom_prods")]])
         )
@@ -3469,7 +3525,198 @@ async def handle_user_text_input(update: Update, context: ContextTypes.DEFAULT_T
         )
         return
 
-    # ── Admin/Assistant: Add In-House Custom Product (Text Input) ──
+    # ── Admin/Assistant: Step 1 Name for Single Product ──
+    if context.user_data.get("waiting_for_single_prod_name") and is_product_manager(user.id):
+        context.user_data["waiting_for_single_prod_name"] = False
+        prod_name = text.strip()
+        if not prod_name or len(prod_name) < 2:
+            await update.message.reply_text("❌ Product name is too short. Please send a valid name:", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="admin_custom_prods")]]))
+            context.user_data["waiting_for_single_prod_name"] = True
+            return
+
+        context.user_data["single_prod_name"] = prod_name
+        context.user_data["waiting_for_single_prod_price"] = True
+        await update.message.reply_text(
+            f"💵 *Step 2 of 3: Set Product Price*\n\n"
+            f"📦 *Product Name:* `{prod_name}`\n\n"
+            "Send the price in USD (e.g. `2.50` or `1.99`):",
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="admin_custom_prods")]])
+        )
+        return
+
+    # ── Admin/Assistant: Step 2 Price for Single Product ──
+    if context.user_data.get("waiting_for_single_prod_price") and is_product_manager(user.id):
+        context.user_data["waiting_for_single_prod_price"] = False
+        try:
+            clean_p = text.strip().replace("$", "").replace("USD", "").strip()
+            price_val = float(clean_p)
+            if price_val < 0.01:
+                raise ValueError()
+        except ValueError:
+            await update.message.reply_text("❌ Invalid price. Please enter a valid dollar amount (e.g. `2.50`):", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="admin_custom_prods")]]))
+            context.user_data["waiting_for_single_prod_price"] = True
+            return
+
+        prod_name = context.user_data.get("single_prod_name", "Product")
+        context.user_data["single_prod_price"] = price_val
+        context.user_data["waiting_for_single_prod_content"] = True
+
+        await update.message.reply_text(
+            f"📦 *Step 3 of 3: Send Stock / Large Text / Account Credentials*\n\n"
+            f"📌 *Product:* `{prod_name}`\n"
+            f"💵 *Price:* `${price_val:.2f}` USD\n\n"
+            "📋 **Paste your full item content in your next message.**\n\n"
+            "💡 _No matter how long it is, how many lines, passwords, instructions, cookies, or URLs it contains — your entire message will be saved as **1 single complete product unit** and delivered automatically to the buyer!_",
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="admin_custom_prods")]])
+        )
+        return
+
+    # ── Admin/Assistant: Step 3 Content for Single Product ──
+    if context.user_data.get("waiting_for_single_prod_content") and is_product_manager(user.id):
+        context.user_data["waiting_for_single_prod_content"] = False
+        prod_name = context.user_data.pop("single_prod_name", "Product")
+        price_val = context.user_data.pop("single_prod_price", 1.0)
+        raw_content = text.strip()
+
+        if not raw_content:
+            await update.message.reply_text("❌ Content cannot be empty.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Custom Products", callback_data="admin_custom_prods")]]))
+            return
+
+        # Create product in DB
+        prod_id = await database.add_custom_product(name=prod_name, price=price_val, created_by=user.id)
+        # Add stock (entire text as 1 single item)
+        await database.add_custom_product_stock(prod_id, [raw_content], added_by=user.id)
+
+        # Broadcast restock alert
+        try:
+            restocked_item = [{
+                "id": 90000 + prod_id,
+                "name": prod_name,
+                "sell_price": price_val,
+                "stock_count": 1,
+                "added_count": 1,
+                "is_custom": True
+            }]
+            await catalog_sync.notify_new_products_alert(
+                bot=context.bot,
+                new_products=[],
+                restocked_products=restocked_item
+            )
+        except Exception as e:
+            logger.error(f"Error broadcasting single product alert: {e}")
+
+        # Alert Admin if assistant created
+        if is_assistant(user.id):
+            try:
+                admin_alert = (
+                    "👨‍💼 *Assistant Added Single Product*\n\n"
+                    f"👤 *Assistant:* {user.first_name} (`{user.id}`)\n"
+                    f"🆔 *Product ID:* `#{prod_id}`\n"
+                    f"📦 *Name:* {prod_name}\n"
+                    f"💵 *Price:* `${price_val:.2f}` USD\n"
+                    f"📊 *Stock:* 1 item loaded"
+                )
+                await context.bot.send_message(chat_id=ADMIN_ID, text=admin_alert, parse_mode=ParseMode.MARKDOWN)
+            except Exception:
+                pass
+
+        preview_short = f"`{raw_content[:200]}...`" if len(raw_content) > 200 else f"`{raw_content}`"
+        await update.message.reply_text(
+            f"🎉 *Product Created & Stock Loaded Successfully!*\n\n"
+            f"🆔 *Product ID:* `#{prod_id}`\n"
+            f"📦 *Product Name:* {prod_name}\n"
+            f"💵 *Price:* `${price_val:.2f}` USD\n"
+            f"📊 *Available Stock:* `1` unit\n\n"
+            f"📄 *Loaded Item Payload:*\n{preview_short}\n\n"
+            "📢 _Broadcast sent to all bot users and notification channel!_",
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("➕ Add Another Item (Large Text)", callback_data=f"admin_addstock_single_{prod_id}")],
+                [InlineKeyboardButton("👁️ Preview Stock", callback_data=f"admin_viewstock_{prod_id}")],
+                [InlineKeyboardButton("📦 Custom Products", callback_data="admin_custom_prods")]
+            ])
+        )
+        return
+
+    # ── Admin/Assistant: Add Single Stock Item (Entire Message = 1 Unit) ──
+    if context.user_data.get("waiting_for_admin_add_single_stock") and is_product_manager(user.id):
+        context.user_data["waiting_for_admin_add_single_stock"] = False
+        c_id = context.user_data.pop("admin_single_stock_cid", None)
+        if not c_id:
+            await update.message.reply_text("❌ Session expired. Please select product again from Custom Products menu.")
+            return
+
+        prod = await database.get_custom_product(c_id)
+        if not prod:
+            await update.message.reply_text("❌ Product not found.")
+            return
+
+        if not is_super_admin(user.id) and prod.get("created_by") and int(prod["created_by"]) != int(user.id):
+            await update.message.reply_text("❌ Permission Denied: You can only add stock to products created by you.")
+            return
+
+        raw_content = text.strip()
+        if not raw_content:
+            await update.message.reply_text("❌ Content cannot be empty.")
+            return
+
+        added_count = await database.add_custom_product_stock(c_id, [raw_content], added_by=user.id)
+        prod = await database.get_custom_product(c_id)
+        prod_name = prod.get("name") if prod else f"Product #{c_id}"
+        total_stock = prod.get("stock_count", added_count) if prod else added_count
+
+        # Broadcast
+        try:
+            restocked_item = [{
+                "id": 90000 + c_id,
+                "name": prod_name,
+                "sell_price": float(prod.get("price", 0.0)),
+                "stock_count": total_stock,
+                "added_count": 1,
+                "is_custom": True
+            }]
+            await catalog_sync.notify_new_products_alert(
+                bot=context.bot,
+                new_products=[],
+                restocked_products=restocked_item
+            )
+        except Exception as e:
+            logger.error(f"Error broadcasting single stock alert: {e}")
+
+        # Alert Admin if assistant added
+        if is_assistant(user.id):
+            try:
+                admin_alert = (
+                    "👨‍💼 *Assistant Stock Activity Report*\n\n"
+                    f"👤 *Assistant:* {user.first_name} (`{user.id}`)\n"
+                    f"📦 *Product:* {prod_name} (ID `#{c_id}`)\n"
+                    f"➕ *Added Items:* `+1` (Single Large Text Unit)\n"
+                    f"📊 *Current Total Stock:* `{total_stock}` in stock"
+                )
+                await context.bot.send_message(chat_id=ADMIN_ID, text=admin_alert, parse_mode=ParseMode.MARKDOWN)
+            except Exception:
+                pass
+
+        preview_short = f"`{raw_content[:200]}...`" if len(raw_content) > 200 else f"`{raw_content}`"
+        await update.message.reply_text(
+            f"🎉 *Single Stock Unit Added Successfully!*\n\n"
+            f"📦 *Product:* {prod_name} (ID `#{c_id}`)\n"
+            f"➕ *Added:* `1` item (entire message saved as 1 unit)\n"
+            f"📊 *Total In Stock:* `{total_stock}` available\n\n"
+            f"📄 *Payload Preview:*\n{preview_short}\n\n"
+            "📢 _Notification sent to all bot users & group!_",
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("➕ Add Another Item (Large Text)", callback_data=f"admin_addstock_single_{c_id}")],
+                [InlineKeyboardButton("👁️ Preview Stock", callback_data=f"admin_viewstock_{c_id}")],
+                [InlineKeyboardButton("📦 Custom Products", callback_data="admin_custom_prods")]
+            ])
+        )
+        return
+
+    # ── Admin/Assistant: Add In-House Custom Product (Quick Text Input) ──
     if context.user_data.get("waiting_for_admin_add_cust_prod") and is_product_manager(user.id):
         context.user_data["waiting_for_admin_add_cust_prod"] = False
         parts = text.split("|")
