@@ -104,7 +104,7 @@ async def init_db():
                     CREATE TABLE IF NOT EXISTS orders_local (
                         id SERIAL PRIMARY KEY,
                         user_id BIGINT,
-                        order_id BIGINT,
+                        order_id TEXT,
                         product_id BIGINT,
                         product_name TEXT,
                         quantity INTEGER,
@@ -170,6 +170,10 @@ async def init_db():
                         await conn.execute(f"ALTER TABLE {col_tbl[0]} ADD COLUMN IF NOT EXISTS {col_tbl[1]} {col_tbl[2]}")
                     except Exception:
                         pass
+                try:
+                    await conn.execute("ALTER TABLE orders_local ALTER COLUMN order_id TYPE TEXT")
+                except Exception:
+                    pass
                 logger.info("Supabase PostgreSQL tables initialized.")
                 return
         except Exception as e:
@@ -197,7 +201,7 @@ async def init_db():
             CREATE TABLE IF NOT EXISTS orders_local (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id INTEGER,
-                order_id INTEGER,
+                order_id TEXT,
                 product_id INTEGER,
                 product_name TEXT,
                 quantity INTEGER,
@@ -457,9 +461,10 @@ async def get_setting(key: str, default: str = None) -> str:
         _SETTINGS_CACHE[k_str] = val
     return val
 
-async def record_order(user_id: int, order_id: int, product_id: int, product_name: str, quantity: int, total: float, status: str, delivered_keys: list):
+async def record_order(user_id: int, order_id: Any, product_id: int, product_name: str, quantity: int, total: float, status: str, delivered_keys: list):
     now = datetime.utcnow().isoformat()
     keys_str = "\n".join(delivered_keys) if delivered_keys else ""
+    order_id_str = str(order_id) if order_id is not None else ""
     if USE_POSTGRES:
         try:
             pool = await get_pg_pool()
@@ -467,7 +472,7 @@ async def record_order(user_id: int, order_id: int, product_id: int, product_nam
                 await conn.execute("""
                     INSERT INTO orders_local (user_id, order_id, product_id, product_name, quantity, total, status, delivered_keys, created_at)
                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-                """, int(user_id), int(order_id) if order_id else None, int(product_id) if product_id else None, product_name, int(quantity), float(total), status, keys_str, now)
+                """, int(user_id), order_id_str, int(product_id) if product_id else None, product_name, int(quantity), float(total), status, keys_str, now)
                 return
         except Exception as e:
             logger.error(f"PG record_order error: {e}")
@@ -475,9 +480,23 @@ async def record_order(user_id: int, order_id: int, product_id: int, product_nam
     import aiosqlite
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute("""
+            CREATE TABLE IF NOT EXISTS orders_local (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
+                order_id TEXT,
+                product_id INTEGER,
+                product_name TEXT,
+                quantity INTEGER,
+                total REAL,
+                status TEXT,
+                delivered_keys TEXT,
+                created_at TEXT
+            )
+        """)
+        await db.execute("""
             INSERT INTO orders_local (user_id, order_id, product_id, product_name, quantity, total, status, delivered_keys, created_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (user_id, order_id, product_id, product_name, quantity, total, status, keys_str, now))
+        """, (user_id, order_id_str, product_id, product_name, quantity, total, status, keys_str, now))
         await db.commit()
 
 async def get_user_orders(user_id: int, limit: int = 10) -> list[dict]:
