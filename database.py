@@ -642,6 +642,13 @@ async def get_margin_for_product(product_id: int) -> float:
         return margins[p_key]
     return margins.get("default", 0.20)
 
+async def get_product_margin(product_key: str) -> float:
+    margins = await get_all_margins()
+    k_str = str(product_key).strip()
+    if k_str in margins:
+        return margins[k_str]
+    return margins.get("default", 0.20)
+
 async def delete_product_margin(product_key: str):
     k_str = str(product_key).strip()
     _MARGINS_CACHE.pop(k_str, None)
