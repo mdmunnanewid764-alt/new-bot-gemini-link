@@ -164,6 +164,14 @@ async def init_db():
                         added_by BIGINT,
                         created_at TEXT
                     );
+                    CREATE TABLE IF NOT EXISTS user_api_keys (
+                        user_id BIGINT PRIMARY KEY,
+                        api_key TEXT UNIQUE,
+                        is_enabled INTEGER DEFAULT 1,
+                        label TEXT DEFAULT 'default',
+                        created_at TEXT,
+                        last_used_at TEXT
+                    );
                 """)
                 for col_tbl in [("custom_products", "created_by", "BIGINT"), ("custom_product_stocks", "added_by", "BIGINT")]:
                     try:
@@ -272,6 +280,16 @@ async def init_db():
                 sold_to_user_id INTEGER,
                 sold_at TEXT,
                 created_at TEXT
+            )
+        """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS user_api_keys (
+                user_id INTEGER PRIMARY KEY,
+                api_key TEXT UNIQUE,
+                is_enabled INTEGER DEFAULT 1,
+                label TEXT DEFAULT 'default',
+                created_at TEXT,
+                last_used_at TEXT
             )
         """)
         for col, col_type in [("tx_hash", "TEXT"), ("network", "TEXT")]:
@@ -1564,5 +1582,171 @@ async def is_assistant_in_db(user_id: int) -> bool:
             row = await cursor.fetchone()
             return bool(row)
     return False
+
+# ─────────────────────────────────────────────────────────────
+#  USER API KEY MANAGEMENT (For Public Resellers & External Bots)
+# ─────────────────────────────────────────────────────────────
+
+import secrets
+
+def generate_api_key(prefix: str = "sk_shop_") -> str:
+    """Generate a clean, secure API key."""
+    raw = secrets.token_urlsafe(32).replace("-", "").replace("_", "")
+    return f"{prefix}{raw[:36]}"
+
+async def create_or_rotate_user_api_key(user_id: int, label: str = "default") -> str:
+    """Generate or rotate a user's Shop API Key."""
+    new_key = generate_api_key()
+    now = datetime.utcnow().isoformat()
+    if USE_POSTGRES:
+        try:
+            pool = await get_pg_pool()
+            async with pool.acquire() as conn:
+                await conn.execute("""
+                    INSERT INTO user_api_keys (user_id, api_key, is_enabled, label, created_at)
+                    VALUES ($1, $2, 1, $3, $4)
+                    ON CONFLICT(user_id) DO UPDATE SET
+                        api_key = EXCLUDED.api_key,
+                        is_enabled = 1,
+                        label = EXCLUDED.label,
+                        created_at = EXCLUDED.created_at
+                """, int(user_id), new_key, label, now)
+                return new_key
+        except Exception as e:
+            logger.error(f"PG create_or_rotate_user_api_key error: {e}")
+
+    import aiosqlite
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("""
+            INSERT INTO user_api_keys (user_id, api_key, is_enabled, label, created_at)
+            VALUES (?, ?, 1, ?, ?)
+            ON CONFLICT(user_id) DO UPDATE SET
+                api_key = excluded.api_key,
+                is_enabled = 1,
+                label = excluded.label,
+                created_at = excluded.created_at
+        """, (int(user_id), new_key, label, now))
+        await db.commit()
+    return new_key
+
+async def get_user_api_key(user_id: int) -> Optional[dict]:
+    """Get the active or disabled API key info for a given user."""
+    if USE_POSTGRES:
+        try:
+            pool = await get_pg_pool()
+            async with pool.acquire() as conn:
+                row = await conn.fetchrow("SELECT * FROM user_api_keys WHERE user_id = $1", int(user_id))
+                return dict(row) if row else None
+        except Exception as e:
+            logger.error(f"PG get_user_api_key error: {e}")
+
+    import aiosqlite
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute("SELECT * FROM user_api_keys WHERE user_id = ?", (int(user_id),)) as cursor:
+            row = await cursor.fetchone()
+            return dict(row) if row else None
+
+async def toggle_user_api_key(user_id: int, enable: Optional[bool] = None) -> bool:
+    """Toggle enable/disable status of a user's API key."""
+    curr = await get_user_api_key(user_id)
+    if not curr:
+        return False
+    new_state = (1 if enable else 0) if enable is not None else (0 if curr.get("is_enabled", 1) == 1 else 1)
+    if USE_POSTGRES:
+        try:
+            pool = await get_pg_pool()
+            async with pool.acquire() as conn:
+                await conn.execute("UPDATE user_api_keys SET is_enabled = $1 WHERE user_id = $2", new_state, int(user_id))
+                return bool(new_state == 1)
+        except Exception as e:
+            logger.error(f"PG toggle_user_api_key error: {e}")
+
+    import aiosqlite
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("UPDATE user_api_keys SET is_enabled = ? WHERE user_id = ?", (new_state, int(user_id)))
+        await db.commit()
+    return bool(new_state == 1)
+
+async def get_user_by_api_key(api_key: str) -> Optional[dict]:
+    """Lookup user information, live wallet balance, and key status by API key."""
+    clean_key = str(api_key).strip()
+    if not clean_key:
+        return None
+    if USE_POSTGRES:
+        try:
+            pool = await get_pg_pool()
+            async with pool.acquire() as conn:
+                row = await conn.fetchrow("""
+                    SELECT k.*, u.username, u.first_name, COALESCE(b.balance, 0.0) as balance
+                    FROM user_api_keys k
+                    LEFT JOIN users u ON k.user_id = u.user_id
+                    LEFT JOIN user_balances b ON k.user_id = b.user_id
+                    WHERE k.api_key = $1
+                """, clean_key)
+                return dict(row) if row else None
+        except Exception as e:
+            logger.error(f"PG get_user_by_api_key error: {e}")
+
+    import aiosqlite
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute("""
+            SELECT k.*, u.username, u.first_name, COALESCE(b.balance, 0.0) as balance
+            FROM user_api_keys k
+            LEFT JOIN users u ON k.user_id = u.user_id
+            LEFT JOIN user_balances b ON k.user_id = b.user_id
+            WHERE k.api_key = ?
+        """, (clean_key,)) as cursor:
+            row = await cursor.fetchone()
+            return dict(row) if row else None
+
+async def touch_api_key(api_key: str):
+    """Update last_used_at timestamp for an API key."""
+    now = datetime.utcnow().isoformat()
+    clean_key = str(api_key).strip()
+    if USE_POSTGRES:
+        try:
+            pool = await get_pg_pool()
+            async with pool.acquire() as conn:
+                await conn.execute("UPDATE user_api_keys SET last_used_at = $1 WHERE api_key = $2", now, clean_key)
+                return
+        except Exception as e:
+            logger.error(f"PG touch_api_key error: {e}")
+
+    import aiosqlite
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("UPDATE user_api_keys SET last_used_at = ? WHERE api_key = ?", (now, clean_key))
+        await db.commit()
+
+async def get_all_user_api_keys() -> list[dict]:
+    """Retrieve all issued API keys for admin overview."""
+    if USE_POSTGRES:
+        try:
+            pool = await get_pg_pool()
+            async with pool.acquire() as conn:
+                rows = await conn.fetch("""
+                    SELECT k.*, u.username, u.first_name, COALESCE(b.balance, 0.0) as balance
+                    FROM user_api_keys k
+                    LEFT JOIN users u ON k.user_id = u.user_id
+                    LEFT JOIN user_balances b ON k.user_id = b.user_id
+                    ORDER BY k.created_at DESC
+                """)
+                return [dict(r) for r in rows]
+        except Exception as e:
+            logger.error(f"PG get_all_user_api_keys error: {e}")
+
+    import aiosqlite
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute("""
+            SELECT k.*, u.username, u.first_name, COALESCE(b.balance, 0.0) as balance
+            FROM user_api_keys k
+            LEFT JOIN users u ON k.user_id = u.user_id
+            LEFT JOIN user_balances b ON k.user_id = b.user_id
+            ORDER BY k.created_at DESC
+        """) as cursor:
+            rows = await cursor.fetchall()
+            return [dict(r) for r in rows]
 
 

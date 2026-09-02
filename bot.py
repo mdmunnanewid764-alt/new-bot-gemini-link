@@ -24,6 +24,7 @@ from telegram.ext import (
 from datetime import datetime
 import database
 import catalog_sync
+import api_server
 from shop_api import ShopAPIClient, ShopAPIError
 from payment_api import PaymentAPIClient, PaymentAPIError
 from binance_api import BinanceAPIClient
@@ -275,6 +276,14 @@ async def handle_navigation(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await show_withdraw_menu(query, context)
     elif data == "nav_account":
         await show_account_info(query, context)
+    elif data == "nav_user_api_key":
+        await show_user_api_key_dashboard(query, context)
+    elif data == "nav_api_rotate":
+        await handle_user_api_rotate_callback(query, context)
+    elif data == "nav_api_toggle":
+        await handle_user_api_toggle_callback(query, context)
+    elif data == "nav_api_docs":
+        await handle_user_api_docs_callback(query, context)
     elif data == "nav_orders":
         await show_orders_history(query, context)
     elif data == "nav_help":
@@ -656,7 +665,106 @@ async def show_account_info(query, context: ContextTypes.DEFAULT_TYPE):
             InlineKeyboardButton("💰 Deposit Funds", callback_data="nav_deposit"),
             InlineKeyboardButton("📜 Order History", callback_data="nav_orders")
         ],
+        [
+            InlineKeyboardButton("🔑 Developer API Key", callback_data="nav_user_api_key"),
+            InlineKeyboardButton("📖 API Docs", callback_data="nav_api_docs")
+        ],
         [InlineKeyboardButton("🔙 Back to Main Menu", callback_data="nav_main")]
+    ]
+    await query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(buttons))
+
+async def show_user_api_key_dashboard(query, context: ContextTypes.DEFAULT_TYPE):
+    user = query.from_user
+    key_info = await database.get_user_api_key(user.id)
+    balance = await database.get_user_balance(user.id)
+
+    if not key_info:
+        text = (
+            "🔑 *Developer API Key Dashboard*\n\n"
+            "Integrate Nexvora Shop with your own external websites, Telegram bots, or reseller applications via our high-speed REST API.\n\n"
+            "⚡ *Key Capabilities:*\n"
+            "• Automated machine-to-machine digital purchases.\n"
+            "• Direct wallet billing from your Telegram balance.\n"
+            "• Real-time stock queries & instant digital key delivery.\n\n"
+            "👉 _You have not generated an API key yet. Click below to generate your unique key:_"
+        )
+        buttons = [
+            [InlineKeyboardButton("✨ Generate API Key", callback_data="nav_api_rotate")],
+            [InlineKeyboardButton("📖 API Documentation", callback_data="nav_api_docs")],
+            [InlineKeyboardButton("🔙 Back to Account", callback_data="nav_account")]
+        ]
+    else:
+        api_key = key_info.get("api_key", "")
+        is_enabled = key_info.get("is_enabled", 1) == 1
+        status_str = "🟢 *Active & Ready*" if is_enabled else "🔴 *Disabled / Paused*"
+        toggle_label = "⏸️ Disable Key" if is_enabled else "▶️ Enable Key"
+        last_used = key_info.get("last_used_at")
+        last_used_str = f"`{last_used[:19].replace('T', ' ')} UTC`" if last_used else "_Never used_"
+
+        text = (
+            "🔑 *Developer API Key Dashboard*\n\n"
+            f"📌 *Your API Key:* (Tap to copy)\n`{api_key}`\n\n"
+            f"⚡ *Status:* {status_str}\n"
+            f"💳 *Linked Balance:* `${balance:.2f}` USD\n"
+            f"🕒 *Last Used:* {last_used_str}\n\n"
+            "💡 *Integration Header:*\n"
+            f"`X-Shop-API-Key: {api_key}`\n\n"
+            "All orders placed via this key will automatically debit from your Telegram balance and deliver stock instantly in the API response."
+        )
+        buttons = [
+            [
+                InlineKeyboardButton("🔄 Rotate / Reset Key", callback_data="nav_api_rotate"),
+                InlineKeyboardButton(toggle_label, callback_data="nav_api_toggle")
+            ],
+            [
+                InlineKeyboardButton("📖 API Documentation", callback_data="nav_api_docs")
+            ],
+            [InlineKeyboardButton("🔙 Back to Account", callback_data="nav_account")]
+        ]
+
+    await query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(buttons))
+
+async def handle_user_api_rotate_callback(query, context: ContextTypes.DEFAULT_TYPE):
+    user = query.from_user
+    new_key = await database.create_or_rotate_user_api_key(user.id)
+    await query.answer("🎉 New API Key Generated Successfully!", show_alert=True)
+    await show_user_api_key_dashboard(query, context)
+
+async def handle_user_api_toggle_callback(query, context: ContextTypes.DEFAULT_TYPE):
+    user = query.from_user
+    new_state = await database.toggle_user_api_key(user.id)
+    msg = "🟢 API Key is now Active" if new_state else "🔴 API Key has been Disabled"
+    await query.answer(msg, show_alert=True)
+    await show_user_api_key_dashboard(query, context)
+
+async def handle_user_api_docs_callback(query, context: ContextTypes.DEFAULT_TYPE):
+    user = query.from_user
+    key_info = await database.get_user_api_key(user.id)
+    key_preview = key_info.get("api_key") if key_info else "sk_shop_YOUR_API_KEY"
+
+    text = (
+        "📖 *Nexvora Shop API Documentation*\n\n"
+        "🌐 *Base URL:* `/shop-api/v1`\n"
+        "🔐 *Auth Headers:*\n"
+        f"`X-Shop-API-Key: {key_preview}`\n"
+        f"`Authorization: Bearer {key_preview}`\n\n"
+        "📡 *Available Endpoints:*\n"
+        "• `GET /shop-api/v1/health` - Health check\n"
+        "• `GET /shop-api/v1/me` - Profile & live balance\n"
+        "• `GET /shop-api/v1/categories` - Category list\n"
+        "• `GET /shop-api/v1/products` - Browse catalog & stock\n"
+        "• `GET /shop-api/v1/products/{id}` - Product details\n"
+        "• `POST /shop-api/v1/orders` - Instant automated purchase\n"
+        "• `GET /shop-api/v1/orders` - Order history\n"
+        "• `GET /shop-api/v1/orders/{code}` - Order lookup\n\n"
+        "📦 *Order Payload Example:*\n"
+        "`POST /shop-api/v1/orders`\n"
+        '```json\n{\n  "product_id": 90007,\n  "quantity": 1\n}\n```\n\n'
+        "⚡ _Delivered credentials are automatically returned in JSON response!_"
+    )
+    buttons = [
+        [InlineKeyboardButton("🔑 Back to API Key", callback_data="nav_user_api_key")],
+        [InlineKeyboardButton("🔙 Back to Account", callback_data="nav_account")]
     ]
     await query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(buttons))
 
@@ -812,10 +920,13 @@ async def show_admin_panel(update_or_query, context: ContextTypes.DEFAULT_TYPE):
         ],
         [
             InlineKeyboardButton("📢 Broadcast Message", callback_data="admin_broadcast"),
-            InlineKeyboardButton("👨‍💼 Manage Assistants", callback_data="admin_manage_assistants"),
+            InlineKeyboardButton("🌐 Reseller API Keys", callback_data="admin_reseller_keys"),
         ],
         [
+            InlineKeyboardButton("👨‍💼 Manage Assistants", callback_data="admin_manage_assistants"),
             InlineKeyboardButton("💾 Download Backup", callback_data="admin_backup"),
+        ],
+        [
             InlineKeyboardButton("🏠 Main Menu", callback_data="nav_main"),
         ],
     ]
@@ -1722,6 +1833,32 @@ async def handle_admin_deposited_users_callback(query, context: ContextTypes.DEF
     ])
     await query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(buttons))
 
+async def handle_admin_reseller_keys_callback(query, context: ContextTypes.DEFAULT_TYPE):
+    keys = await database.get_all_user_api_keys()
+    text = (
+        f"🌐 *Registered Reseller API Keys ({len(keys)})*\n\n"
+        "Machine-to-Machine API users connected to your shop:\n\n"
+    )
+    if not keys:
+        text += "_No user API keys generated yet._\n"
+    else:
+        for k in keys[:15]:
+            u_id = k.get("user_id")
+            uname = k.get("username")
+            u_label = f"@{uname}" if uname else (k.get("first_name") or f"ID {u_id}")
+            st = "🟢" if k.get("is_enabled", 1) == 1 else "🔴"
+            bal = float(k.get("balance", 0.0))
+            key_short = f"`{k['api_key'][:12]}...`"
+            last_u = k.get("last_used_at")
+            last_u_str = f"{last_u[5:16].replace('T', ' ')}" if last_u else "Never"
+            text += f"{st} *{u_label}* (`{u_id}`) | 💳 `${bal:.2f}`\n🔑 {key_short} (Used: `{last_u_str}`)\n\n"
+
+    buttons = [
+        [InlineKeyboardButton("🔄 Refresh", callback_data="admin_reseller_keys")],
+        [InlineKeyboardButton("🔙 Admin Panel", callback_data="nav_admin")]
+    ]
+    await query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(buttons))
+
 async def handle_admin_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -1741,6 +1878,8 @@ async def handle_admin_router(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     if data == "admin_panel":
         await show_admin_panel(query, context)
+    elif data == "admin_reseller_keys":
+        await handle_admin_reseller_keys_callback(query, context)
     elif data == "admin_deposits":
         await handle_admin_deposits_callback(query, context)
     elif data == "admin_all_deposits":
@@ -4176,6 +4315,67 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     await handle_admin_stats_callback(update, context)
 
+async def api_key_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    key_info = await database.get_user_api_key(user.id)
+    balance = await database.get_user_balance(user.id)
+    if not key_info:
+        text = (
+            "🔑 *Developer API Key Dashboard*\n\n"
+            "Integrate Nexvora Shop with your own external websites, Telegram bots, or reseller applications via our high-speed REST API.\n\n"
+            "👉 _You have not generated an API key yet. Tap below to generate one:_"
+        )
+        buttons = [
+            [InlineKeyboardButton("✨ Generate API Key", callback_data="nav_api_rotate")],
+            [InlineKeyboardButton("📖 Read API Docs", callback_data="nav_api_docs")]
+        ]
+    else:
+        api_key = key_info.get("api_key", "")
+        is_enabled = key_info.get("is_enabled", 1) == 1
+        status_str = "🟢 *Active & Ready*" if is_enabled else "🔴 *Disabled / Paused*"
+        toggle_label = "⏸️ Disable Key" if is_enabled else "▶️ Enable Key"
+        text = (
+            "🔑 *Developer API Key Dashboard*\n\n"
+            f"📌 *Your API Key:* (Tap to copy)\n`{api_key}`\n\n"
+            f"⚡ *Status:* {status_str}\n"
+            f"💳 *Linked Balance:* `${balance:.2f}` USD\n\n"
+            f"💡 *Header:* `X-Shop-API-Key: {api_key}`"
+        )
+        buttons = [
+            [
+                InlineKeyboardButton("🔄 Rotate Key", callback_data="nav_api_rotate"),
+                InlineKeyboardButton(toggle_label, callback_data="nav_api_toggle")
+            ],
+            [InlineKeyboardButton("📖 Read API Docs", callback_data="nav_api_docs")]
+        ]
+    await update.message.reply_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(buttons))
+
+async def apidocs_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    key_info = await database.get_user_api_key(user.id)
+    key_preview = key_info.get("api_key") if key_info else "sk_shop_YOUR_API_KEY"
+    text = (
+        "📖 *Nexvora Shop API Documentation*\n\n"
+        "🌐 *Base URL:* `/shop-api/v1`\n"
+        "🔐 *Auth Header:*\n"
+        f"`X-Shop-API-Key: {key_preview}`\n\n"
+        "📡 *Available Endpoints:*\n"
+        "• `GET /shop-api/v1/health` - Status check\n"
+        "• `GET /shop-api/v1/me` - Profile & live balance\n"
+        "• `GET /shop-api/v1/categories` - Shop categories\n"
+        "• `GET /shop-api/v1/products` - Catalog & live stock\n"
+        "• `GET /shop-api/v1/products/{id}` - Single product detail\n"
+        "• `POST /shop-api/v1/orders` - Instant automated purchase\n"
+        "• `GET /shop-api/v1/orders` - Recent order history\n"
+        "• `GET /shop-api/v1/orders/{code}` - Specific order lookup\n\n"
+        "⚡ _Instant machine-to-machine key delivery returned in JSON response!_"
+    )
+    await update.message.reply_text(
+        text,
+        parse_mode=ParseMode.MARKDOWN,
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔑 Manage API Key", callback_data="nav_user_api_key")]])
+    )
+
 async def noop_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.callback_query.answer()
 
@@ -4203,8 +4403,11 @@ def main():
         builder.base_url(tg_base_url)
 
     async def on_startup(application):
-        logger.info("Bot application started. Launching background product auto-sync & announcement worker (every 2 mins)...")
+        logger.info("Bot application started. Launching background product auto-sync (every 2 mins)...")
         asyncio.create_task(catalog_sync.start_periodic_catalog_sync(api_client, bot=application.bot, interval_seconds=120))
+        # Launch REST API Web Server & Docs Portal
+        api_server.set_server_dependencies(api_client, bot=application.bot)
+        asyncio.create_task(api_server.start_api_server(host="0.0.0.0", port=8080))
 
     builder.post_init(on_startup)
     app = builder.build()
@@ -4212,6 +4415,8 @@ def main():
     # Commands
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("admin", admin_command))
+    app.add_handler(CommandHandler(["apikey", "api_key", "myapi", "mykey"], api_key_command))
+    app.add_handler(CommandHandler(["apidocs", "api_docs", "docs"], apidocs_command))
     app.add_handler(CommandHandler("setwallet", setwallet_command))
     app.add_handler(CommandHandler("wallet", wallet_command))
     app.add_handler(CommandHandler("setmargin", setmargin_command))
