@@ -959,8 +959,8 @@ async def get_pending_deposits() -> list[dict]:
             rows = await cursor.fetchall()
             return [dict(r) for r in rows]
 
-async def approve_deposit(merchant_trade_no: str, verified_txhash: str = None) -> dict:
-    """Atomically approve a deposit, verify uniqueness of tx_hash, and credit user balance with transaction locking."""
+async def approve_deposit(merchant_trade_no: str, verified_txhash: str = None, actual_amount: float = None) -> dict:
+    """Atomically approve a deposit, credit EXACT actual received amount, verify uniqueness of tx_hash, and lock transaction."""
     rec = await get_deposit_record(merchant_trade_no)
     if not rec:
         return None
@@ -968,7 +968,8 @@ async def approve_deposit(merchant_trade_no: str, verified_txhash: str = None) -
         return rec
 
     user_id = int(rec["user_id"])
-    amount = float(rec["amount"])
+    # Always credit exact actual amount from Binance / Blockchain if provided
+    amount = float(actual_amount) if (actual_amount is not None and float(actual_amount) > 0) else float(rec["amount"])
     tx_to_set = (verified_txhash or rec.get("tx_hash") or "").strip()
     now = datetime.utcnow().isoformat()
 
@@ -984,13 +985,13 @@ async def approve_deposit(merchant_trade_no: str, verified_txhash: str = None) -
             pool = await get_pg_pool()
             async with pool.acquire() as conn:
                 async with conn.transaction():
-                    # Atomic status transition lock: only update if status != 'PAID'
+                    # Atomic status transition lock: update amount to actual received & status to PAID
                     updated = await conn.fetchrow("""
                         UPDATE deposits 
-                        SET status = 'PAID', tx_hash = COALESCE(NULLIF($2, ''), tx_hash)
+                        SET status = 'PAID', amount = $2, tx_hash = COALESCE(NULLIF($3, ''), tx_hash)
                         WHERE merchant_trade_no = $1 AND status != 'PAID'
                         RETURNING merchant_trade_no, user_id, amount, tx_hash
-                    """, merchant_trade_no, tx_to_set)
+                    """, merchant_trade_no, amount, tx_to_set)
 
                     if not updated:
                         rec["status"] = "PAID"
@@ -1016,6 +1017,7 @@ async def approve_deposit(merchant_trade_no: str, verified_txhash: str = None) -
                     except Exception:
                         pass
 
+                    rec["amount"] = amount
                     rec["new_balance"] = new_bal
                     rec["status"] = "PAID"
                     rec["tx_hash"] = updated.get("tx_hash") or tx_to_set
@@ -1027,9 +1029,9 @@ async def approve_deposit(merchant_trade_no: str, verified_txhash: str = None) -
     import aiosqlite
     async with aiosqlite.connect(DB_PATH) as db:
         async with db.execute("""
-            UPDATE deposits SET status = 'PAID', tx_hash = COALESCE(NULLIF(?, ''), tx_hash)
+            UPDATE deposits SET status = 'PAID', amount = ?, tx_hash = COALESCE(NULLIF(?, ''), tx_hash)
             WHERE merchant_trade_no = ? AND status != 'PAID'
-        """, (tx_to_set, merchant_trade_no)) as cursor:
+        """, (amount, tx_to_set, merchant_trade_no)) as cursor:
             if cursor.rowcount == 0:
                 rec["status"] = "PAID"
                 rec["new_balance"] = await get_user_balance(user_id)
@@ -1043,6 +1045,7 @@ async def approve_deposit(merchant_trade_no: str, verified_txhash: str = None) -
         await db.commit()
 
     new_bal = await get_user_balance(user_id)
+    rec["amount"] = amount
     rec["new_balance"] = new_bal
     rec["status"] = "PAID"
     return rec

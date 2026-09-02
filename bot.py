@@ -2817,7 +2817,7 @@ async def handle_user_text_input(update: Update, context: ContextTypes.DEFAULT_T
             status = res.get("status", "").upper()
             if status == "PAID":
                 credit_amount = float(res.get("amount", amount))
-                approved_rec = await database.approve_deposit(trade_no, verified_txhash=tx_hash)
+                approved_rec = await database.approve_deposit(trade_no, verified_txhash=tx_hash, actual_amount=credit_amount)
                 if not approved_rec:
                     await update.message.reply_text("⚠️ This transaction was already processed and credited.")
                     return
