@@ -942,12 +942,21 @@ async def get_deposit_record(merchant_trade_no: str) -> dict:
             row = await cursor.fetchone()
             return dict(row) if row else None
 
-async def get_pending_deposits() -> list[dict]:
+async def get_pending_deposits(include_initial: bool = False) -> list[dict]:
+    """Retrieve deposits awaiting admin review (focusing on those with submitted TxHashes)."""
     if USE_POSTGRES:
         try:
             pool = await get_pg_pool()
             async with pool.acquire() as conn:
-                rows = await conn.fetch("SELECT * FROM deposits WHERE status IN ('INITIAL', 'PENDING', 'PENDING_VERIFICATION') ORDER BY created_at DESC")
+                if include_initial:
+                    rows = await conn.fetch("SELECT * FROM deposits WHERE status IN ('INITIAL', 'PENDING', 'PENDING_VERIFICATION') ORDER BY created_at DESC")
+                else:
+                    rows = await conn.fetch("""
+                        SELECT * FROM deposits 
+                        WHERE status IN ('PENDING_VERIFICATION', 'PENDING') 
+                           OR (status = 'INITIAL' AND tx_hash IS NOT NULL AND tx_hash != '')
+                        ORDER BY created_at DESC
+                    """)
                 return [dict(r) for r in rows]
         except Exception as e:
             logger.error(f"PG get_pending_deposits error: {e}")
@@ -955,9 +964,37 @@ async def get_pending_deposits() -> list[dict]:
     import aiosqlite
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
-        async with db.execute("SELECT * FROM deposits WHERE status IN ('INITIAL', 'PENDING', 'PENDING_VERIFICATION') ORDER BY created_at DESC") as cursor:
+        if include_initial:
+            query = "SELECT * FROM deposits WHERE status IN ('INITIAL', 'PENDING', 'PENDING_VERIFICATION') ORDER BY created_at DESC"
+        else:
+            query = "SELECT * FROM deposits WHERE status IN ('PENDING_VERIFICATION', 'PENDING') OR (status = 'INITIAL' AND tx_hash IS NOT NULL AND tx_hash != '') ORDER BY created_at DESC"
+        async with db.execute(query) as cursor:
             rows = await cursor.fetchall()
             return [dict(r) for r in rows]
+
+async def clear_stale_initial_deposits() -> int:
+    """Bulk expire abandoned INITIAL invoices with no submitted TxHash."""
+    if USE_POSTGRES:
+        try:
+            pool = await get_pg_pool()
+            async with pool.acquire() as conn:
+                res = await conn.execute("""
+                    UPDATE deposits 
+                    SET status = 'EXPIRED' 
+                    WHERE status = 'INITIAL' AND (tx_hash IS NULL OR tx_hash = '')
+                """)
+                count = int(res.split()[-1]) if res else 0
+                return count
+        except Exception as e:
+            logger.error(f"PG clear_stale_initial_deposits error: {e}")
+            return 0
+
+    import aiosqlite
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute("UPDATE deposits SET status = 'EXPIRED' WHERE status = 'INITIAL' AND (tx_hash IS NULL OR tx_hash = '')") as cursor:
+            count = cursor.rowcount
+            await db.commit()
+            return count
 
 async def approve_deposit(merchant_trade_no: str, verified_txhash: str = None, actual_amount: float = None) -> dict:
     """Atomically approve a deposit, credit EXACT actual received amount, verify uniqueness of tx_hash, and lock transaction."""
@@ -1048,6 +1085,33 @@ async def approve_deposit(merchant_trade_no: str, verified_txhash: str = None, a
     rec["amount"] = amount
     rec["new_balance"] = new_bal
     rec["status"] = "PAID"
+    return rec
+
+async def reject_deposit(merchant_trade_no: str) -> dict:
+    """Atomically reject a deposit invoice so it is marked REJECTED and removed from pending."""
+    rec = await get_deposit_record(merchant_trade_no)
+    if not rec:
+        return None
+    if rec["status"] == "PAID":
+        # Cannot reject already paid deposit
+        return None
+
+    if USE_POSTGRES:
+        try:
+            pool = await get_pg_pool()
+            async with pool.acquire() as conn:
+                await conn.execute("UPDATE deposits SET status = 'REJECTED' WHERE merchant_trade_no = $1 AND status != 'PAID'", merchant_trade_no)
+                rec["status"] = "REJECTED"
+                return rec
+        except Exception as e:
+            logger.error(f"PG reject_deposit error: {e}")
+
+    import aiosqlite
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("UPDATE deposits SET status = 'REJECTED' WHERE merchant_trade_no = ? AND status != 'PAID'", (merchant_trade_no,))
+        await db.commit()
+
+    rec["status"] = "REJECTED"
     return rec
 
 async def is_txhash_used(tx_hash: str, current_trade_no: str = None) -> bool:

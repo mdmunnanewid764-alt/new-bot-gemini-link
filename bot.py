@@ -1738,7 +1738,7 @@ def get_explorer_url(network: str, tx_hash: str) -> str:
     return f"https://bscscan.com/tx/{tx}"
 
 async def handle_admin_deposits_callback(query, context: ContextTypes.DEFAULT_TYPE):
-    pending = await database.get_pending_deposits()
+    pending = await database.get_pending_deposits(include_initial=False)
     text = f"📋 *Pending Crypto Deposits ({len(pending)})*\n\n"
     buttons = []
     for d in pending[:8]:
@@ -1763,11 +1763,15 @@ async def handle_admin_deposits_callback(query, context: ContextTypes.DEFAULT_TY
         buttons.append(row)
 
     if not pending:
-        text += "_No pending deposit orders._"
+        text += "_No pending deposit orders with submitted TxIDs._\n\n"
 
     buttons.append([
         InlineKeyboardButton("🔄 Refresh", callback_data="admin_deposits"),
-        InlineKeyboardButton("🔙 Admin Panel", callback_data="nav_admin")
+        InlineKeyboardButton("🗑️ Clear Stale Invoices", callback_data="admin_clear_stale_deposits")
+    ])
+    buttons.append([
+        InlineKeyboardButton("📜 All Deposits History", callback_data="admin_all_deposits"),
+        InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin")
     ])
     await query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(buttons))
 
@@ -2337,6 +2341,13 @@ async def handle_admin_router(update: Update, context: ContextTypes.DEFAULT_TYPE
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="admin_binance_keys")]])
         )
     elif data == "admin_deposits":
+        await handle_admin_deposits_callback(query, context)
+    elif data == "admin_clear_stale_deposits":
+        cleared_cnt = await database.clear_stale_initial_deposits()
+        try:
+            await query.answer(f"🧹 Expired {cleared_cnt} abandoned/unpaid invoices!", show_alert=True)
+        except Exception:
+            pass
         await handle_admin_deposits_callback(query, context)
     elif data == "admin_backup":
         await handle_admin_backup_callback(query, context)
