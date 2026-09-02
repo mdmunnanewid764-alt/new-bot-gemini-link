@@ -296,13 +296,19 @@ class PaymentAPIClient:
 
         # ── 1. Check Binance Account Deposit History ──
         try:
-            binance_deposits = await binance_client.get_recent_deposits(coin="USDT", limit=25)
+            binance_deposits = await binance_client.get_recent_deposits(coin="USDT", limit=30)
             for d in binance_deposits:
                 d_tx_id = str(d.get("txId", "")).strip()
                 d_status = d.get("status")
                 # Matches exact or substring (e.g. 'Off-chain transfer 405469248638' matches '405469248638')
                 if clean_tx and (clean_tx in d_tx_id or d_tx_id == clean_tx):
-                    if d_status == 1: # 1 means success
+                    if d_status == 1: # 1 means success on Binance
+                        # Security Check: Ensure TxID was not already credited in any other invoice
+                        is_already_credited = await database.is_txhash_used(d_tx_id, current_trade_no=merchant_trade_no)
+                        if is_already_credited:
+                            logger.warning(f"Anti-Fraud: Blocked reused Binance TxID {d_tx_id} on invoice {merchant_trade_no}")
+                            return {"success": False, "status": "REJECTED_DUPLICATE", "reason": "Transaction has already been used and credited."}
+
                         actual_amt = float(d.get("amount", expected_amount))
                         return {
                             "success": True,
@@ -313,6 +319,11 @@ class PaymentAPIClient:
                         }
         except Exception as be:
             logger.warning(f"Error checking Binance deposit history: {be}")
+
+        # Security Check: Ensure clean_tx is not already credited before on-chain checks
+        if await database.is_txhash_used(clean_tx, current_trade_no=merchant_trade_no):
+            logger.warning(f"Anti-Fraud: Blocked reused TxHash {clean_tx} on invoice {merchant_trade_no}")
+            return {"success": False, "status": "REJECTED_DUPLICATE", "reason": "Transaction hash has already been credited."}
 
         # ── 2. Check On-Chain Blockchain RPCs ──
         wallet_address = ""

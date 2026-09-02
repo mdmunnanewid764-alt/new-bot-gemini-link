@@ -257,14 +257,15 @@ async def handle_create_order(request: web.Request) -> web.Response:
     if avail_stock < quantity or not p.get("in_stock"):
         return json_response({"error": "Quantity is outside the available range / Out of stock."}, status=409)
 
-    # Deduct balance atomically
-    deducted = await database.deduct_user_balance(user_id, total_price)
-    if not deducted:
-        return json_response({"error": "Balance deduction failed. Please retry."}, status=409)
-
-    delivered_keys = []
     order_code = f"ORD-NEX-{int(time.time())}-{secrets.token_hex(2).upper()}"
     status = "fulfilled"
+
+    # Deduct balance atomically with audit tracking
+    deducted = await database.deduct_user_balance(user_id, total_price, reason="API_PURCHASE", ref_id=order_code)
+    if not deducted:
+        return json_response({"error": "Balance deduction failed or insufficient balance. Please retry."}, status=409)
+
+    delivered_keys = []
 
     try:
         if is_custom:
@@ -272,12 +273,12 @@ async def handle_create_order(request: web.Request) -> web.Response:
             delivered_keys = await database.purchase_custom_product_stock(custom_id, user_id, quantity)
             if not delivered_keys or len(delivered_keys) < quantity:
                 # Refund
-                await database.add_user_balance(user_id, total_price)
+                await database.add_user_balance(user_id, total_price, reason="API_REFUND_OUT_OF_STOCK", ref_id=order_code)
                 return json_response({"error": "Not enough in-house stock available to fulfill order."}, status=409)
         else:
             # Synced API product from supplier
             if not _upstream_api_client:
-                await database.add_user_balance(user_id, total_price)
+                await database.add_user_balance(user_id, total_price, reason="API_REFUND_GATEWAY_DOWN", ref_id=order_code)
                 return json_response({"error": "Supplier gateway temporarily unavailable."}, status=503)
 
             supplier_order = await _upstream_api_client.create_order(
@@ -288,7 +289,7 @@ async def handle_create_order(request: web.Request) -> web.Response:
             delivered_keys = supplier_order.get("delivered_keys") or supplier_order.get("order", {}).get("delivered_keys", [])
             if not delivered_keys:
                 # Refund
-                await database.add_user_balance(user_id, total_price)
+                await database.add_user_balance(user_id, total_price, reason="API_REFUND_SUPPLIER_EMPTY", ref_id=order_code)
                 return json_response({"error": "Supplier fulfillment failed. Balance refunded."}, status=502)
 
         # Save order record in database

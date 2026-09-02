@@ -2816,10 +2816,13 @@ async def handle_user_text_input(update: Update, context: ContextTypes.DEFAULT_T
             res = await payment_client.submit_tx(trade_no, network, tx_hash)
             status = res.get("status", "").upper()
             if status == "PAID":
-                auto_approved = True
                 credit_amount = float(res.get("amount", amount))
-                await database.update_deposit_status(trade_no, "PAID")
-                new_bal = await database.add_user_balance(user.id, credit_amount)
+                approved_rec = await database.approve_deposit(trade_no, verified_txhash=tx_hash)
+                if not approved_rec:
+                    await update.message.reply_text("⚠️ This transaction was already processed and credited.")
+                    return
+                auto_approved = True
+                new_bal = approved_rec.get("new_balance") or (await database.get_user_balance(user.id))
                 # Broadcast to Notification Group (-1003721268860)
                 await broadcast_group_deposit(
                     bot=context.bot,

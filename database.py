@@ -172,6 +172,15 @@ async def init_db():
                         created_at TEXT,
                         last_used_at TEXT
                     );
+                    CREATE TABLE IF NOT EXISTS financial_audit_logs (
+                        id SERIAL PRIMARY KEY,
+                        user_id BIGINT NOT NULL,
+                        action TEXT NOT NULL,
+                        amount DOUBLE PRECISION NOT NULL,
+                        balance_after DOUBLE PRECISION,
+                        ref_id TEXT,
+                        created_at TEXT
+                    );
                 """)
                 for col_tbl in [("custom_products", "created_by", "BIGINT"), ("custom_product_stocks", "added_by", "BIGINT")]:
                     try:
@@ -180,6 +189,11 @@ async def init_db():
                         pass
                 try:
                     await conn.execute("ALTER TABLE orders_local ALTER COLUMN order_id TYPE TEXT")
+                except Exception:
+                    pass
+                try:
+                    await conn.execute("CREATE INDEX IF NOT EXISTS idx_audit_uid ON financial_audit_logs(user_id)")
+                    await conn.execute("CREATE INDEX IF NOT EXISTS idx_audit_action ON financial_audit_logs(action)")
                 except Exception:
                     pass
                 logger.info("Supabase PostgreSQL tables initialized.")
@@ -290,6 +304,17 @@ async def init_db():
                 label TEXT DEFAULT 'default',
                 created_at TEXT,
                 last_used_at TEXT
+            )
+        """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS financial_audit_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                action TEXT NOT NULL,
+                amount REAL NOT NULL,
+                balance_after REAL,
+                ref_id TEXT,
+                created_at TEXT
             )
         """)
         for col, col_type in [("tx_hash", "TEXT"), ("network", "TEXT")]:
@@ -682,7 +707,9 @@ async def get_user_balance(user_id: int) -> float:
             row = await cursor.fetchone()
             return float(row[0]) if row else 0.0
 
-async def add_user_balance(user_id: int, amount: float) -> float:
+async def add_user_balance(user_id: int, amount: float, reason: str = "DEPOSIT_OR_MANUAL", ref_id: str = "") -> float:
+    now = datetime.utcnow().isoformat()
+    amount_f = float(amount)
     if USE_POSTGRES:
         try:
             pool = await get_pg_pool()
@@ -691,8 +718,16 @@ async def add_user_balance(user_id: int, amount: float) -> float:
                     INSERT INTO user_balances (user_id, balance)
                     VALUES ($1, $2)
                     ON CONFLICT(user_id) DO UPDATE SET balance = user_balances.balance + EXCLUDED.balance
-                """, int(user_id), float(amount))
-                return await get_user_balance(user_id)
+                """, int(user_id), amount_f)
+                new_b = await get_user_balance(user_id)
+                try:
+                    await conn.execute("""
+                        INSERT INTO financial_audit_logs (user_id, action, amount, balance_after, ref_id, created_at)
+                        VALUES ($1, $2, $3, $4, $5, $6)
+                    """, int(user_id), reason, amount_f, float(new_b), str(ref_id), now)
+                except Exception:
+                    pass
+                return new_b
         except Exception as e:
             logger.error(f"PG add_user_balance error: {e}")
 
@@ -702,32 +737,50 @@ async def add_user_balance(user_id: int, amount: float) -> float:
             INSERT INTO user_balances (user_id, balance)
             VALUES (?, ?)
             ON CONFLICT(user_id) DO UPDATE SET balance = balance + excluded.balance
-        """, (user_id, float(amount)))
+        """, (user_id, amount_f))
         await db.commit()
-    return await get_user_balance(user_id)
+    new_b = await get_user_balance(user_id)
+    return new_b
 
-async def deduct_user_balance(user_id: int, amount: float) -> bool:
-    curr = await get_user_balance(user_id)
-    if curr < amount:
-        return False
+async def deduct_user_balance(user_id: int, amount: float, reason: str = "PURCHASE", ref_id: str = "") -> bool:
+    """Atomically deduct balance ensuring user balance never goes below zero."""
+    amount_f = float(amount)
+    now = datetime.utcnow().isoformat()
     if USE_POSTGRES:
         try:
             pool = await get_pg_pool()
             async with pool.acquire() as conn:
-                await conn.execute("""
-                    UPDATE user_balances SET balance = balance - $1 WHERE user_id = $2
-                """, float(amount), int(user_id))
-                return True
+                # Atomic deduction condition: balance >= amount
+                row = await conn.fetchrow("""
+                    UPDATE user_balances 
+                    SET balance = balance - $1 
+                    WHERE user_id = $2 AND balance >= $1
+                    RETURNING balance
+                """, amount_f, int(user_id))
+                if row:
+                    new_b = float(row["balance"])
+                    try:
+                        await conn.execute("""
+                            INSERT INTO financial_audit_logs (user_id, action, amount, balance_after, ref_id, created_at)
+                            VALUES ($1, $2, $3, $4, $5, $6)
+                        """, int(user_id), reason, -amount_f, new_b, str(ref_id), now)
+                    except Exception:
+                        pass
+                    return True
+                return False
         except Exception as e:
             logger.error(f"PG deduct_user_balance error: {e}")
+            return False
 
     import aiosqlite
     async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute("""
-            UPDATE user_balances SET balance = balance - ? WHERE user_id = ?
-        """, (float(amount), user_id))
-        await db.commit()
-    return True
+        async with db.execute("""
+            UPDATE user_balances SET balance = balance - ? WHERE user_id = ? AND balance >= ?
+        """, (amount_f, user_id, amount_f)) as cursor:
+            if cursor.rowcount > 0:
+                await db.commit()
+                return True
+    return False
 
 async def force_deduct_user_balance(user_id: int, amount: float) -> float:
     curr = await get_user_balance(user_id)
@@ -906,23 +959,98 @@ async def get_pending_deposits() -> list[dict]:
             rows = await cursor.fetchall()
             return [dict(r) for r in rows]
 
-async def approve_deposit(merchant_trade_no: str) -> dict:
+async def approve_deposit(merchant_trade_no: str, verified_txhash: str = None) -> dict:
+    """Atomically approve a deposit, verify uniqueness of tx_hash, and credit user balance with transaction locking."""
     rec = await get_deposit_record(merchant_trade_no)
     if not rec:
         return None
     if rec["status"] == "PAID":
         return rec
 
-    await update_deposit_status(merchant_trade_no, "PAID")
-    new_bal = await add_user_balance(rec["user_id"], rec["amount"])
+    user_id = int(rec["user_id"])
+    amount = float(rec["amount"])
+    tx_to_set = (verified_txhash or rec.get("tx_hash") or "").strip()
+    now = datetime.utcnow().isoformat()
+
+    # If TxHash is present, ensure it has not already been credited in ANY other deposit
+    if tx_to_set:
+        is_used = await is_txhash_used(tx_to_set, current_trade_no=merchant_trade_no)
+        if is_used:
+            logger.warning(f"Rejecting deposit approval for {merchant_trade_no}: TxHash {tx_to_set} was already credited!")
+            return None
+
+    if USE_POSTGRES:
+        try:
+            pool = await get_pg_pool()
+            async with pool.acquire() as conn:
+                async with conn.transaction():
+                    # Atomic status transition lock: only update if status != 'PAID'
+                    updated = await conn.fetchrow("""
+                        UPDATE deposits 
+                        SET status = 'PAID', tx_hash = COALESCE(NULLIF($2, ''), tx_hash)
+                        WHERE merchant_trade_no = $1 AND status != 'PAID'
+                        RETURNING merchant_trade_no, user_id, amount, tx_hash
+                    """, merchant_trade_no, tx_to_set)
+
+                    if not updated:
+                        rec["status"] = "PAID"
+                        rec["new_balance"] = await get_user_balance(user_id)
+                        return rec
+
+                    # Add balance atomically inside same transaction
+                    await conn.execute("""
+                        INSERT INTO user_balances (user_id, balance)
+                        VALUES ($1, $2)
+                        ON CONFLICT(user_id) DO UPDATE SET balance = user_balances.balance + EXCLUDED.balance
+                    """, user_id, amount)
+
+                    new_b_val = await conn.fetchval("SELECT balance FROM user_balances WHERE user_id = $1", user_id)
+                    new_bal = float(new_b_val) if new_b_val is not None else amount
+
+                    # Insert financial audit record
+                    try:
+                        await conn.execute("""
+                            INSERT INTO financial_audit_logs (user_id, action, amount, balance_after, ref_id, created_at)
+                            VALUES ($1, 'DEPOSIT_CREDIT', $2, $3, $4, $5)
+                        """, user_id, amount, new_bal, merchant_trade_no, now)
+                    except Exception:
+                        pass
+
+                    rec["new_balance"] = new_bal
+                    rec["status"] = "PAID"
+                    rec["tx_hash"] = updated.get("tx_hash") or tx_to_set
+                    return rec
+        except Exception as e:
+            logger.error(f"PG approve_deposit atomic error: {e}")
+
+    # SQLite Fallback
+    import aiosqlite
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute("""
+            UPDATE deposits SET status = 'PAID', tx_hash = COALESCE(NULLIF(?, ''), tx_hash)
+            WHERE merchant_trade_no = ? AND status != 'PAID'
+        """, (tx_to_set, merchant_trade_no)) as cursor:
+            if cursor.rowcount == 0:
+                rec["status"] = "PAID"
+                rec["new_balance"] = await get_user_balance(user_id)
+                return rec
+
+        await db.execute("""
+            INSERT INTO user_balances (user_id, balance)
+            VALUES (?, ?)
+            ON CONFLICT(user_id) DO UPDATE SET balance = balance + excluded.balance
+        """, (user_id, amount))
+        await db.commit()
+
+    new_bal = await get_user_balance(user_id)
     rec["new_balance"] = new_bal
     rec["status"] = "PAID"
     return rec
 
 async def is_txhash_used(tx_hash: str, current_trade_no: str = None) -> bool:
-    """Check if a TxHash has already been submitted or approved to prevent fake duplicate submissions."""
+    """Check if a TxHash has already been credited in another deposit to prevent fake duplicates."""
     clean_tx = tx_hash.strip().lower()
-    if not clean_tx:
+    if not clean_tx or len(clean_tx) < 4:
         return False
     if USE_POSTGRES:
         try:
@@ -930,12 +1058,12 @@ async def is_txhash_used(tx_hash: str, current_trade_no: str = None) -> bool:
             async with pool.acquire() as conn:
                 if current_trade_no:
                     count = await conn.fetchval(
-                        "SELECT COUNT(*) FROM deposits WHERE LOWER(tx_hash) = $1 AND merchant_trade_no != $2 AND status IN ('PAID', 'PENDING_VERIFICATION')",
+                        "SELECT COUNT(*) FROM deposits WHERE LOWER(tx_hash) = $1 AND merchant_trade_no != $2 AND status = 'PAID'",
                         clean_tx, current_trade_no
                     )
                 else:
                     count = await conn.fetchval(
-                        "SELECT COUNT(*) FROM deposits WHERE LOWER(tx_hash) = $1 AND status IN ('PAID', 'PENDING_VERIFICATION')",
+                        "SELECT COUNT(*) FROM deposits WHERE LOWER(tx_hash) = $1 AND status = 'PAID'",
                         clean_tx
                     )
                 return bool(count and count > 0)
@@ -946,18 +1074,19 @@ async def is_txhash_used(tx_hash: str, current_trade_no: str = None) -> bool:
     async with aiosqlite.connect(DB_PATH) as db:
         if current_trade_no:
             async with db.execute(
-                "SELECT COUNT(*) FROM deposits WHERE LOWER(tx_hash) = LOWER(?) AND merchant_trade_no != ? AND status IN ('PAID', 'PENDING_VERIFICATION')",
+                "SELECT COUNT(*) FROM deposits WHERE LOWER(tx_hash) = LOWER(?) AND merchant_trade_no != ? AND status = 'PAID'",
                 (clean_tx, current_trade_no)
             ) as cursor:
                 row = await cursor.fetchone()
                 return bool(row and row[0] > 0)
         else:
             async with db.execute(
-                "SELECT COUNT(*) FROM deposits WHERE LOWER(tx_hash) = LOWER(?) AND status IN ('PAID', 'PENDING_VERIFICATION')",
+                "SELECT COUNT(*) FROM deposits WHERE LOWER(tx_hash) = LOWER(?) AND status = 'PAID'",
                 (clean_tx,)
             ) as cursor:
                 row = await cursor.fetchone()
                 return bool(row and row[0] > 0)
+    return False
 
 async def get_all_deposits(limit: int = 30, status: str = None) -> list[dict]:
     """Retrieve full history of deposits with user info."""
