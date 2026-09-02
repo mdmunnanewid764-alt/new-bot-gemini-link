@@ -1298,16 +1298,21 @@ async def handle_admin_binance_keys_callback(query, context: ContextTypes.DEFAUL
 async def handle_admin_balance_callback(query, context: ContextTypes.DEFAULT_TYPE):
     try:
         me = await api_client.get_me()
-        bal = me.get("deposit_balance", 0.0)
+        bal = float(me.get("balance") if me.get("balance") is not None else me.get("deposit_balance", 0.0))
         tg_id = me.get("telegram_id", "N/A")
-        shop_enabled = "🟢 Active" if me.get("shop_enabled") else "🔴 Disabled"
-        key_enabled = "🟢 Active" if me.get("api_key_enabled") else "🔴 Disabled"
+        uname = me.get("username")
+        raw_uname = f"`@{uname}`" if uname else "`N/A`"
+        fname = me.get("first_name") or "API User"
+        total_spent = float(me.get("total_spent", 0.0))
+        label = me.get("label", "default")
         text = (
-            f"💰 *Supplier Account Balance*\n\n"
-            f"💳 *Deposit Balance:* `${bal:.2f}` USD\n"
-            f"🆔 *Supplier Telegram ID:* `{tg_id}`\n"
-            f"🏪 *Shop Status:* {shop_enabled}\n"
-            f"🔑 *API Key Status:* {key_enabled}"
+            f"💰 *Shop API Supplier Balance & Account*\n\n"
+            f"👤 *Account:* `{fname}` ({raw_uname})\n"
+            f"🆔 *Telegram ID:* `{tg_id}`\n"
+            f"💳 *Wallet Balance:* `${bal:.2f}` USD\n"
+            f"💵 *Total Spent:* `${total_spent:.2f}` USD\n"
+            f"🏷️ *API Key Tier:* `{label}`\n"
+            f"🟢 *API Status:* `Active & Connected`"
         )
     except Exception as e:
         text = f"❌ *Error checking supplier balance:*\n`{e}`"
@@ -1315,6 +1320,7 @@ async def handle_admin_balance_callback(query, context: ContextTypes.DEFAULT_TYP
     buttons = [
         [
             InlineKeyboardButton("🔄 Refresh", callback_data="admin_balance"),
+            InlineKeyboardButton("🔑 Change Key", callback_data="admin_setkey"),
             InlineKeyboardButton("🔙 Admin Panel", callback_data="nav_admin")
         ]
     ]
@@ -1530,12 +1536,20 @@ async def handle_admin_key_test_callback(query, context: ContextTypes.DEFAULT_TY
     await query.answer("Testing Shop API Key connection...")
     try:
         me = await api_client.get_me()
-        bal = me.get("deposit_balance", 0.0)
+        bal = float(me.get("balance") if me.get("balance") is not None else me.get("deposit_balance", 0.0))
+        uname = me.get("username")
+        raw_uname = f"`@{uname}`" if uname else "`N/A`"
+        fname = me.get("first_name") or "API User"
+        total_spent = float(me.get("total_spent", 0.0))
+        label = me.get("label", "default")
         status_text = (
             f"✅ *API Key Verified & Connected!*\n\n"
-            f"💳 *Deposit Balance:* `${bal:.2f}` USD\n"
+            f"👤 *Account:* `{fname}` ({raw_uname})\n"
             f"🆔 *Supplier Telegram ID:* `{me.get('telegram_id', 'N/A')}`\n"
-            f"🟢 *Shop Enabled:* `{me.get('shop_enabled')}`"
+            f"💳 *Wallet Balance:* `${bal:.2f}` USD\n"
+            f"💵 *Total Spent:* `${total_spent:.2f}` USD\n"
+            f"🏷️ *Key Tier/Label:* `{label}`\n"
+            f"🟢 *Status:* `Active & Ready`"
         )
     except Exception as e:
         status_text = f"❌ *API Key Test Failed:*\n`{e}`"
@@ -2261,11 +2275,22 @@ async def setkey_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     try:
         me = await api_client.get_me()
-        bal = me.get("deposit_balance", 0.0)
+        bal = float(me.get("balance") if me.get("balance") is not None else me.get("deposit_balance", 0.0))
+        uname = me.get("username")
+        raw_uname = f"`@{uname}`" if uname else "`N/A`"
+        fname = me.get("first_name") or "API User"
+        total_spent = float(me.get("total_spent", 0.0))
+        
+        # Trigger background sync
+        asyncio.create_task(catalog_sync.sync_catalog_now(api_client, bot=context.bot))
+
         await update.message.reply_text(
-            f"✅ *API Key updated successfully!*\n\n"
-            f"💳 *Deposit Balance:* `${bal:.2f}` USD\n"
-            f"🟢 *Shop Active:* `{me.get('shop_enabled')}`",
+            f"✅ *API Key Updated & Connected!*\n\n"
+            f"👤 *Account:* `{fname}` ({raw_uname})\n"
+            f"🆔 *Supplier ID:* `{me.get('telegram_id', 'N/A')}`\n"
+            f"💳 *Wallet Balance:* `${bal:.2f}` USD\n"
+            f"💵 *Total Spent:* `${total_spent:.2f}` USD\n"
+            f"🔄 _Syncing latest product catalog in background..._",
             parse_mode=ParseMode.MARKDOWN,
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin")]])
         )
@@ -2695,11 +2720,22 @@ async def handle_user_text_input(update: Update, context: ContextTypes.DEFAULT_T
         await database.set_setting("shop_api_key", text)
         try:
             me = await api_client.get_me()
-            bal = me.get("deposit_balance", 0.0)
+            bal = float(me.get("balance") if me.get("balance") is not None else me.get("deposit_balance", 0.0))
+            uname = me.get("username")
+            raw_uname = f"`@{uname}`" if uname else "`N/A`"
+            fname = me.get("first_name") or "API User"
+            total_spent = float(me.get("total_spent", 0.0))
+            
+            # Trigger background sync
+            asyncio.create_task(catalog_sync.sync_catalog_now(api_client, bot=context.bot))
+
             await update.message.reply_text(
                 f"✅ *Shop API Key Updated & Connected!*\n\n"
-                f"💳 *Deposit Balance:* `${bal:.2f}` USD\n"
-                f"🟢 *Shop Enabled:* `{me.get('shop_enabled')}`",
+                f"👤 *Account:* `{fname}` ({raw_uname})\n"
+                f"🆔 *Supplier ID:* `{me.get('telegram_id', 'N/A')}`\n"
+                f"💳 *Wallet Balance:* `${bal:.2f}` USD\n"
+                f"💵 *Total Spent:* `${total_spent:.2f}` USD\n"
+                f"🔄 _Syncing latest product catalog in background..._",
                 parse_mode=ParseMode.MARKDOWN,
                 reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin")]])
             )
