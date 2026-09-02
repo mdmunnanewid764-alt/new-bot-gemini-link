@@ -714,13 +714,16 @@ async def show_user_api_key_dashboard(query, context: ContextTypes.DEFAULT_TYPE)
             f"`X-Shop-API-Key: {api_key}`\n\n"
             "All orders placed via this key will automatically debit from your Telegram balance and deliver stock instantly in the API response."
         )
+        web_url = os.getenv("WEB_URL", "https://new-bot-gemini-link.onrender.com").rstrip("/")
+        docs_url = f"{web_url}/shop-api/docs"
         buttons = [
             [
                 InlineKeyboardButton("🔄 Rotate / Reset Key", callback_data="nav_api_rotate"),
                 InlineKeyboardButton(toggle_label, callback_data="nav_api_toggle")
             ],
             [
-                InlineKeyboardButton("📖 API Documentation", callback_data="nav_api_docs")
+                InlineKeyboardButton("🌐 Web Docs Portal", url=docs_url),
+                InlineKeyboardButton("📖 In-Bot Docs", callback_data="nav_api_docs")
             ],
             [InlineKeyboardButton("🔙 Back to Account", callback_data="nav_account")]
         ]
@@ -745,27 +748,33 @@ async def handle_user_api_docs_callback(query, context: ContextTypes.DEFAULT_TYP
     key_info = await database.get_user_api_key(user.id)
     key_preview = key_info.get("api_key") if key_info else "sk_shop_YOUR_API_KEY"
 
+    web_url = os.getenv("WEB_URL", "https://new-bot-gemini-link.onrender.com").rstrip("/")
+    api_base = f"{web_url}/shop-api/v1"
+    docs_url = f"{web_url}/shop-api/docs"
+
     text = (
         "📖 *Nexvora Shop API Documentation*\n\n"
-        "🌐 *Base URL:* `/shop-api/v1`\n"
+        f"🌐 *Base URL:* `{api_base}`\n"
+        f"🔗 *Web Portal:* {docs_url}\n\n"
         "🔐 *Auth Headers:*\n"
         f"`X-Shop-API-Key: {key_preview}`\n"
         f"`Authorization: Bearer {key_preview}`\n\n"
         "📡 *Available Endpoints:*\n"
-        "• `GET /shop-api/v1/health` - Health check\n"
-        "• `GET /shop-api/v1/me` - Profile & live balance\n"
-        "• `GET /shop-api/v1/categories` - Category list\n"
-        "• `GET /shop-api/v1/products` - Browse catalog & stock\n"
-        "• `GET /shop-api/v1/products/{id}` - Product details\n"
-        "• `POST /shop-api/v1/orders` - Instant automated purchase\n"
-        "• `GET /shop-api/v1/orders` - Order history\n"
-        "• `GET /shop-api/v1/orders/{code}` - Order lookup\n\n"
+        f"• `GET {api_base}/health` - Health check\n"
+        f"• `GET {api_base}/me` - Profile & live balance\n"
+        f"• `GET {api_base}/categories` - Category list\n"
+        f"• `GET {api_base}/products` - Browse catalog & stock\n"
+        f"• `GET {api_base}/products/{{id}}` - Product details\n"
+        f"• `POST {api_base}/orders` - Instant automated purchase\n"
+        f"• `GET {api_base}/orders` - Order history\n"
+        f"• `GET {api_base}/orders/{{code}}` - Order lookup\n\n"
         "📦 *Order Payload Example:*\n"
-        "`POST /shop-api/v1/orders`\n"
+        f"`POST {api_base}/orders`\n"
         '```json\n{\n  "product_id": 90007,\n  "quantity": 1\n}\n```\n\n'
         "⚡ _Delivered credentials are automatically returned in JSON response!_"
     )
     buttons = [
+        [InlineKeyboardButton("🌐 Open Web Documentation", url=docs_url)],
         [InlineKeyboardButton("🔑 Back to API Key", callback_data="nav_user_api_key")],
         [InlineKeyboardButton("🔙 Back to Account", callback_data="nav_account")]
     ]
@@ -4604,26 +4613,36 @@ async def apidocs_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     key_info = await database.get_user_api_key(user.id)
     key_preview = key_info.get("api_key") if key_info else "sk_shop_YOUR_API_KEY"
+
+    web_url = os.getenv("WEB_URL", "https://new-bot-gemini-link.onrender.com").rstrip("/")
+    api_base = f"{web_url}/shop-api/v1"
+    docs_url = f"{web_url}/shop-api/docs"
+
     text = (
         "📖 *Nexvora Shop API Documentation*\n\n"
-        "🌐 *Base URL:* `/shop-api/v1`\n"
+        f"🌐 *Base URL:* `{api_base}`\n"
+        f"🔗 *Web Portal:* {docs_url}\n\n"
         "🔐 *Auth Header:*\n"
         f"`X-Shop-API-Key: {key_preview}`\n\n"
         "📡 *Available Endpoints:*\n"
-        "• `GET /shop-api/v1/health` - Status check\n"
-        "• `GET /shop-api/v1/me` - Profile & live balance\n"
-        "• `GET /shop-api/v1/categories` - Shop categories\n"
-        "• `GET /shop-api/v1/products` - Catalog & live stock\n"
-        "• `GET /shop-api/v1/products/{id}` - Single product detail\n"
-        "• `POST /shop-api/v1/orders` - Instant automated purchase\n"
-        "• `GET /shop-api/v1/orders` - Recent order history\n"
-        "• `GET /shop-api/v1/orders/{code}` - Specific order lookup\n\n"
+        f"• `GET {api_base}/health` - Status check\n"
+        f"• `GET {api_base}/me` - Profile & live balance\n"
+        f"• `GET {api_base}/categories` - Shop categories\n"
+        f"• `GET {api_base}/products` - Catalog & live stock\n"
+        f"• `GET {api_base}/products/{{id}}` - Single product detail\n"
+        f"• `POST {api_base}/orders` - Instant automated purchase\n"
+        f"• `GET {api_base}/orders` - Recent order history\n"
+        f"• `GET {api_base}/orders/{{code}}` - Specific order lookup\n\n"
         "⚡ _Instant machine-to-machine key delivery returned in JSON response!_"
     )
+    buttons = [
+        [InlineKeyboardButton("🌐 Open Web Documentation", url=docs_url)],
+        [InlineKeyboardButton("🔑 Manage API Key", callback_data="nav_user_api_key")]
+    ]
     await update.message.reply_text(
         text,
         parse_mode=ParseMode.MARKDOWN,
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔑 Manage API Key", callback_data="nav_user_api_key")]])
+        reply_markup=InlineKeyboardMarkup(buttons)
     )
 
 async def noop_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):

@@ -888,7 +888,10 @@ else:
 """
 
 async def handle_docs(request: web.Request) -> web.Response:
-    return web.Response(text=DOCS_HTML, content_type="text/html")
+    web_url = os.getenv("WEB_URL", "https://new-bot-gemini-link.onrender.com")
+    clean_host = web_url.replace("https://", "").replace("http://", "").rstrip("/")
+    html_rendered = DOCS_HTML.replace("YOUR_DOMAIN", clean_host)
+    return web.Response(text=html_rendered, content_type="text/html")
 
 def create_api_app() -> web.Application:
     """Build the aiohttp web application for Shop API."""
