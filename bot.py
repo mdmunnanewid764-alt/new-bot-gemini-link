@@ -24,7 +24,10 @@ from telegram.ext import (
 from datetime import datetime
 import database
 import catalog_sync
-import api_server
+try:
+    import api_server
+except Exception as e:
+    api_server = None
 from shop_api import ShopAPIClient, ShopAPIError
 from payment_api import PaymentAPIClient, PaymentAPIError
 from binance_api import BinanceAPIClient
@@ -4653,8 +4656,12 @@ def main():
         logger.info("Bot application started. Launching background product auto-sync (every 2 mins)...")
         asyncio.create_task(catalog_sync.start_periodic_catalog_sync(api_client, bot=application.bot, interval_seconds=120))
         # Launch REST API Web Server & Docs Portal
-        api_server.set_server_dependencies(api_client, bot=application.bot)
-        asyncio.create_task(api_server.start_api_server(host="0.0.0.0", port=8080))
+        if api_server:
+            try:
+                api_server.set_server_dependencies(api_client, bot=application.bot)
+                asyncio.create_task(api_server.start_api_server(host="0.0.0.0", port=8080))
+            except Exception as e:
+                logger.warning(f"Could not start API server: {e}")
 
     builder.post_init(on_startup)
     app = builder.build()
