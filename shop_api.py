@@ -17,7 +17,18 @@ class ShopAPIError(Exception):
 
 class ShopAPIClient:
     def __init__(self, base_url: Optional[str] = None):
-        self.base_url = (base_url or os.getenv("SHOP_API_BASE_URL") or DEFAULT_BASE_URL).rstrip("/")
+        self._custom_base_url = base_url
+
+    async def get_base_url(self) -> str:
+        if self._custom_base_url and "upibot" not in self._custom_base_url:
+            return self._custom_base_url.rstrip("/")
+        db_url = await database.get_setting("shop_api_base_url")
+        if db_url and "upibot" not in db_url:
+            return db_url.rstrip("/")
+        env_url = os.getenv("SHOP_API_BASE_URL")
+        if env_url and "upibot" not in env_url:
+            return env_url.rstrip("/")
+        return DEFAULT_BASE_URL.rstrip("/")
 
     async def get_api_key(self) -> Optional[str]:
         """Fetch API key from database setting or .env environment variable."""
@@ -67,29 +78,33 @@ class ShopAPIClient:
 
     async def health(self) -> Dict[str, Any]:
         """Public health check."""
+        base_url = await self.get_base_url()
         async with httpx.AsyncClient(timeout=10.0) as client:
-            res = await client.get(f"{self.base_url}/health")
+            res = await client.get(f"{base_url}/health")
             return await self._handle_response(res)
 
     async def get_me(self) -> Dict[str, Any]:
         """Account + wallet balance info."""
+        base_url = await self.get_base_url()
         headers = await self._get_headers(requires_auth=True)
         async with httpx.AsyncClient(timeout=10.0) as client:
-            res = await client.get(f"{self.base_url}/me", headers=headers)
+            res = await client.get(f"{base_url}/me", headers=headers)
             return await self._handle_response(res)
 
     async def get_categories(self) -> List[Dict[str, Any]]:
         """Lists visible shop categories."""
+        base_url = await self.get_base_url()
         headers = await self._get_headers(requires_auth=True)
         async with httpx.AsyncClient(timeout=10.0) as client:
-            res = await client.get(f"{self.base_url}/categories", headers=headers)
+            res = await client.get(f"{base_url}/categories", headers=headers)
             data = await self._handle_response(res)
             return data.get("categories", []) if isinstance(data.get("categories"), list) else []
 
     async def get_products(self, category_id: Optional[int] = None) -> List[Dict[str, Any]]:
         """Lists buyable products. Optional category filter."""
+        base_url = await self.get_base_url()
         headers = await self._get_headers(requires_auth=True)
-        url = f"{self.base_url}/products"
+        url = f"{base_url}/products"
         if category_id:
             url += f"?category_id={category_id}"
         async with httpx.AsyncClient(timeout=12.0) as client:
@@ -99,9 +114,10 @@ class ShopAPIClient:
 
     async def get_product(self, product_id: int) -> Dict[str, Any]:
         """Get one product with category and pricing info."""
+        base_url = await self.get_base_url()
         headers = await self._get_headers(requires_auth=True)
         async with httpx.AsyncClient(timeout=10.0) as client:
-            res = await client.get(f"{self.base_url}/products/{product_id}", headers=headers)
+            res = await client.get(f"{base_url}/products/{product_id}", headers=headers)
             data = await self._handle_response(res)
             return data.get("product", data)
 
@@ -113,6 +129,7 @@ class ShopAPIClient:
         customer_name: Optional[str] = None
     ) -> Dict[str, Any]:
         """Buys stock immediately from wallet balance and returns delivered keys."""
+        base_url = await self.get_base_url()
         headers = await self._get_headers(requires_auth=True)
         payload = {
             "product_id": int(product_id),
@@ -124,21 +141,23 @@ class ShopAPIClient:
             payload["customer_name"] = customer_name
 
         async with httpx.AsyncClient(timeout=30.0) as client:
-            res = await client.post(f"{self.base_url}/orders", headers=headers, json=payload)
+            res = await client.post(f"{base_url}/orders", headers=headers, json=payload)
             return await self._handle_response(res)
 
     async def get_order(self, order_code: str) -> Dict[str, Any]:
         """Get one order owned by this API key, including delivery payloads."""
+        base_url = await self.get_base_url()
         headers = await self._get_headers(requires_auth=True)
         async with httpx.AsyncClient(timeout=10.0) as client:
-            res = await client.get(f"{self.base_url}/orders/{order_code}", headers=headers)
+            res = await client.get(f"{base_url}/orders/{order_code}", headers=headers)
             data = await self._handle_response(res)
             return data.get("order", data)
 
     async def get_orders(self, limit: int = 20) -> List[Dict[str, Any]]:
         """List recent orders."""
+        base_url = await self.get_base_url()
         headers = await self._get_headers(requires_auth=True)
         async with httpx.AsyncClient(timeout=10.0) as client:
-            res = await client.get(f"{self.base_url}/orders?limit={limit}", headers=headers)
+            res = await client.get(f"{base_url}/orders?limit={limit}", headers=headers)
             data = await self._handle_response(res)
             return data.get("orders", []) if isinstance(data.get("orders"), list) else []
