@@ -1247,7 +1247,9 @@ async def handle_admin_binance_deposits_callback(query, context: ContextTypes.DE
             f"🕒 Time: `{time_str}`\n"
         )
 
-        if len(tx) > 20 and all(c in "0123456789abcdefABCDEFxX" for c in tx):
+        if d.get("transferType") == 1 or "Off-chain" in tx:
+            buttons.append([InlineKeyboardButton(f"⚡ Binance Internal: +{amt:.2f} {coin}", url="https://www.binance.com/en/my/wallet/history/deposit-crypto")])
+        elif len(tx) > 20 and all(c in "0123456789abcdefABCDEFxX" for c in tx):
             exp_url = get_explorer_url(net, tx)
             buttons.append([InlineKeyboardButton(f"🔍 Explorer: +{amt:.2f} {coin} ({net})", url=exp_url)])
 
