@@ -963,20 +963,20 @@ async def show_admin_panel(update_or_query, context: ContextTypes.DEFAULT_TYPE):
             InlineKeyboardButton("📌 Pin Product (Top)", callback_data="admin_pin_products"),
         ],
         [
+            InlineKeyboardButton("🔘 Hide / Show Products", callback_data="admin_manage_api_prods"),
             InlineKeyboardButton(toggle_btn_text, callback_data="admin_toggle_catalog_filter"),
+        ],
+        [
             InlineKeyboardButton("📍 Deposit Wallets", callback_data="admin_wallets"),
-        ],
-        [
             InlineKeyboardButton("💸 Balance Manager", callback_data="admin_manage_balance"),
+        ],
+        [
             InlineKeyboardButton("📋 Pending Deposits", callback_data="admin_deposits"),
-        ],
-        [
             InlineKeyboardButton("📜 All Deposits History", callback_data="admin_all_deposits"),
-            InlineKeyboardButton("👥 Deposited Users", callback_data="admin_deposited_users"),
         ],
         [
+            InlineKeyboardButton("👥 Deposited Users", callback_data="admin_deposited_users"),
             InlineKeyboardButton("🚫 Blocked Buyers", callback_data="admin_blocked_buyers"),
-            InlineKeyboardButton("🔄 Sync Products", callback_data="admin_sync"),
         ],
         [
             InlineKeyboardButton("📢 Broadcast Message", callback_data="admin_broadcast"),
@@ -984,9 +984,10 @@ async def show_admin_panel(update_or_query, context: ContextTypes.DEFAULT_TYPE):
         ],
         [
             InlineKeyboardButton("👨‍💼 Manage Assistants", callback_data="admin_manage_assistants"),
-            InlineKeyboardButton("💾 Download Backup", callback_data="admin_backup"),
+            InlineKeyboardButton("🔄 Sync Products", callback_data="admin_sync"),
         ],
         [
+            InlineKeyboardButton("💾 Download Backup", callback_data="admin_backup"),
             InlineKeyboardButton("🏠 Main Menu", callback_data="nav_main"),
         ],
     ]
