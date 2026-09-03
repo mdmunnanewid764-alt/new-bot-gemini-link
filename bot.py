@@ -268,8 +268,14 @@ async def handle_navigation(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data == "nav_main":
         await start_command(update, context)
-    elif data == "nav_products":
-        await show_products_list(query, context)
+    elif data == "nav_products" or data.startswith("nav_products_page_"):
+        page = 1
+        if data.startswith("nav_products_page_"):
+            try:
+                page = int(data.split("_")[-1])
+            except ValueError:
+                page = 1
+        await show_products_list(query, context, page=page)
     elif data == "nav_deposit":
         await show_deposit_menu(query, context)
     elif data == "nav_withdraw":
@@ -297,7 +303,7 @@ async def handle_navigation(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             await query.edit_message_text("❌ Unauthorized access.", reply_markup=main_menu_keyboard(user.id))
 
-async def show_products_list(query, context: ContextTypes.DEFAULT_TYPE):
+async def show_products_list(query, context: ContextTypes.DEFAULT_TYPE, page: int = 1):
     try:
         products = await catalog_sync.get_local_catalog()
         if not products:
@@ -317,9 +323,24 @@ async def show_products_list(query, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=keyboard)
         return
 
-    text = "🛒 *Available Products*\n\nSelect a product to view details and purchase:"
+    # Pagination Setup: 8 items per page
+    ITEMS_PER_PAGE = 8
+    total_products = len(products)
+    total_pages = max(1, (total_products + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE)
+    current_page = max(1, min(page, total_pages))
+
+    start_idx = (current_page - 1) * ITEMS_PER_PAGE
+    end_idx = start_idx + ITEMS_PER_PAGE
+    page_products = products[start_idx:end_idx]
+
+    text = (
+        f"🛒 *Available Products (Page {current_page}/{total_pages})*\n\n"
+        f"📊 *Total In-Stock Items:* `{total_products}` products\n"
+        "Select a product below to view details and purchase:"
+    )
+
     buttons = []
-    for p in products:
+    for p in page_products:
         p_id = p.get("id") or p.get("product_id")
         name = p.get("name", "Product")
         price = p.get("sell_price", 0.0)
@@ -328,8 +349,21 @@ async def show_products_list(query, context: ContextTypes.DEFAULT_TYPE):
         button_text = f"{name} - ${price:.2f} ({stock_str})"
         buttons.append([InlineKeyboardButton(button_text, callback_data=f"prod_{p_id}")])
 
+    # Next / Prev Navigation Row if multiple pages
+    if total_pages > 1:
+        nav_row = []
+        if current_page > 1:
+            nav_row.append(InlineKeyboardButton("⬅️ Prev", callback_data=f"nav_products_page_{current_page - 1}"))
+        
+        nav_row.append(InlineKeyboardButton(f"📄 {current_page}/{total_pages}", callback_data=f"nav_products_page_{current_page}"))
+
+        if current_page < total_pages:
+            nav_row.append(InlineKeyboardButton("Next ➡️", callback_data=f"nav_products_page_{current_page + 1}"))
+        
+        buttons.append(nav_row)
+
     buttons.append([
-        InlineKeyboardButton("🔄 Refresh", callback_data="nav_products"),
+        InlineKeyboardButton("🔄 Refresh", callback_data=f"nav_products_page_{current_page}"),
         InlineKeyboardButton("🔙 Main Menu", callback_data="nav_main")
     ])
     
