@@ -2317,6 +2317,76 @@ async def handle_admin_router(update: Update, context: ContextTypes.DEFAULT_TYPE
             parse_mode=ParseMode.MARKDOWN,
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="admin_custom_prods")]])
         )
+    elif data.startswith("admin_addstock_more_"):
+        c_id = int(data.replace("admin_addstock_more_", ""))
+        prod = await database.get_custom_product(c_id)
+        prod_name = prod.get("name") if prod else f"Product #{c_id}"
+        context.user_data["admin_single_stock_cid"] = c_id
+        context.user_data["waiting_for_admin_add_single_stock"] = True
+        await query.edit_message_text(
+            f"➕ *Add Next Item for `{prod_name}`* (ID `#{c_id}`)\n\n"
+            "Paste the next credentials/text in your next message.\n\n"
+            "💡 _This item will be saved to stock. No user alert will be sent until you tap Done._",
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("✅ Done & Broadcast Alert", callback_data=f"admin_finish_stock_broadcast_{c_id}")],
+                [InlineKeyboardButton("📦 Finish Silently (No Alert)", callback_data=f"admin_finish_stock_silent_{c_id}")]
+            ])
+        )
+    elif data.startswith("admin_finish_stock_broadcast_"):
+        c_id = int(data.replace("admin_finish_stock_broadcast_", ""))
+        session = context.user_data.pop("pending_stock_session", {})
+        
+        # Build items to broadcast
+        items_to_broadcast = list(session.values())
+        if not items_to_broadcast:
+            prod = await database.get_custom_product(c_id)
+            if prod:
+                items_to_broadcast.append({
+                    "id": 90000 + c_id,
+                    "name": prod.get("name", f"Product #{c_id}"),
+                    "sell_price": float(prod.get("price", 0.0)),
+                    "stock_count": int(prod.get("stock_count", 1)),
+                    "added_count": 1,
+                    "is_custom": True,
+                    "is_new": False
+                })
+
+        new_items = [p for p in items_to_broadcast if p.get("is_new")]
+        restocked_items = [p for p in items_to_broadcast if not p.get("is_new")]
+
+        try:
+            await catalog_sync.notify_new_products_alert(
+                bot=context.bot,
+                new_products=new_items,
+                restocked_products=restocked_items
+            )
+            try:
+                await query.answer("📢 Announcement broadcasted to all users and group!", show_alert=True)
+            except Exception:
+                pass
+        except Exception as e:
+            logger.error(f"Error broadcasting on finish stock: {e}")
+
+        tot_units = sum(p.get("added_count", 1) for p in items_to_broadcast)
+        await query.edit_message_text(
+            f"🎉 *Stock Session Finished & Broadcasted!*\n\n"
+            f"📢 *Broadcast Report:* `{tot_units}` newly added stock units announced to all users & group.\n\n"
+            "Your store catalog is live with the updated stock!",
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("📦 Custom Products", callback_data="admin_custom_prods")],
+                [InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin")]
+            ])
+        )
+    elif data.startswith("admin_finish_stock_silent_"):
+        c_id = int(data.replace("admin_finish_stock_silent_", ""))
+        context.user_data.pop("pending_stock_session", None)
+        try:
+            await query.answer("✅ Stock saved silently without broadcast.", show_alert=True)
+        except Exception:
+            pass
+        await handle_admin_custom_products_callback(query, context)
     elif data.startswith("admin_viewstock_"):
         c_id = int(data.replace("admin_viewstock_", ""))
         prod = await database.get_custom_product(c_id)
@@ -3716,25 +3786,21 @@ async def handle_user_text_input(update: Update, context: ContextTypes.DEFAULT_T
         # Add stock (entire text as 1 single item)
         await database.add_custom_product_stock(prod_id, [raw_content], added_by=user.id)
 
-        # Broadcast restock alert
-        try:
-            restocked_item = [{
-                "id": 90000 + prod_id,
-                "name": prod_name,
-                "sell_price": price_val,
-                "stock_count": 1,
-                "added_count": 1,
-                "is_custom": True
-            }]
-            await catalog_sync.notify_new_products_alert(
-                bot=context.bot,
-                new_products=[],
-                restocked_products=restocked_item
-            )
-        except Exception as e:
-            logger.error(f"Error broadcasting single product alert: {e}")
+        # Track in session for final batch broadcast when user clicks Done
+        session = context.user_data.setdefault("pending_stock_session", {})
+        p_data = session.setdefault(str(prod_id), {
+            "id": 90000 + prod_id,
+            "name": prod_name,
+            "sell_price": float(price_val),
+            "stock_count": 1,
+            "added_count": 0,
+            "is_custom": True,
+            "is_new": True
+        })
+        p_data["added_count"] += 1
+        p_data["stock_count"] = 1
 
-        # Alert Admin if assistant created
+        # Alert Super Admin if created by Assistant
         if is_assistant(user.id):
             try:
                 admin_alert = (
@@ -3751,18 +3817,18 @@ async def handle_user_text_input(update: Update, context: ContextTypes.DEFAULT_T
 
         preview_short = f"`{raw_content[:200]}...`" if len(raw_content) > 200 else f"`{raw_content}`"
         await update.message.reply_text(
-            f"🎉 *Product Created & Stock Loaded Successfully!*\n\n"
+            f"🎉 *Product Created & Stock Unit Saved!*\n\n"
             f"🆔 *Product ID:* `#{prod_id}`\n"
             f"📦 *Product Name:* {prod_name}\n"
             f"💵 *Price:* `${price_val:.2f}` USD\n"
-            f"📊 *Available Stock:* `1` unit\n\n"
-            f"📄 *Loaded Item Payload:*\n{preview_short}\n\n"
-            "📢 _Broadcast sent to all bot users and notification channel!_",
+            f"📊 *Current Stock:* `1` unit\n\n"
+            f"📄 *Payload Preview:*\n{preview_short}\n\n"
+            "⏳ _Notification to users is PAUSED. Add more stock or click Done below to finish and broadcast!_",
             parse_mode=ParseMode.MARKDOWN,
             reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("➕ Add Another Item (Large Text)", callback_data=f"admin_addstock_single_{prod_id}")],
-                [InlineKeyboardButton("👁️ Preview Stock", callback_data=f"admin_viewstock_{prod_id}")],
-                [InlineKeyboardButton("📦 Custom Products", callback_data="admin_custom_prods")]
+                [InlineKeyboardButton("➕ Add More Stock (Next Item)", callback_data=f"admin_addstock_more_{prod_id}")],
+                [InlineKeyboardButton("✅ Done / Finish & Broadcast Alert", callback_data=f"admin_finish_stock_broadcast_{prod_id}")],
+                [InlineKeyboardButton("📦 Finish Silently (No Broadcast)", callback_data=f"admin_finish_stock_silent_{prod_id}")]
             ])
         )
         return
@@ -3794,32 +3860,29 @@ async def handle_user_text_input(update: Update, context: ContextTypes.DEFAULT_T
         prod_name = prod.get("name") if prod else f"Product #{c_id}"
         total_stock = prod.get("stock_count", added_count) if prod else added_count
 
-        # Broadcast
-        try:
-            restocked_item = [{
-                "id": 90000 + c_id,
-                "name": prod_name,
-                "sell_price": float(prod.get("price", 0.0)),
-                "stock_count": total_stock,
-                "added_count": 1,
-                "is_custom": True
-            }]
-            await catalog_sync.notify_new_products_alert(
-                bot=context.bot,
-                new_products=[],
-                restocked_products=restocked_item
-            )
-        except Exception as e:
-            logger.error(f"Error broadcasting single stock alert: {e}")
+        # Track in session for final batch broadcast
+        session = context.user_data.setdefault("pending_stock_session", {})
+        p_data = session.setdefault(str(c_id), {
+            "id": 90000 + c_id,
+            "name": prod_name,
+            "sell_price": float(prod.get("price", 0.0)),
+            "stock_count": total_stock,
+            "added_count": 0,
+            "is_custom": True,
+            "is_new": False
+        })
+        p_data["added_count"] += 1
+        p_data["stock_count"] = total_stock
+        session_added = p_data["added_count"]
 
-        # Alert Admin if assistant added
+        # Alert Super Admin if assistant added
         if is_assistant(user.id):
             try:
                 admin_alert = (
                     "👨‍💼 *Assistant Stock Activity Report*\n\n"
                     f"👤 *Assistant:* {user.first_name} (`{user.id}`)\n"
                     f"📦 *Product:* {prod_name} (ID `#{c_id}`)\n"
-                    f"➕ *Added Items:* `+1` (Single Large Text Unit)\n"
+                    f"➕ *Added Items:* `+1` (Session: `{session_added}` added)\n"
                     f"📊 *Current Total Stock:* `{total_stock}` in stock"
                 )
                 await context.bot.send_message(chat_id=ADMIN_ID, text=admin_alert, parse_mode=ParseMode.MARKDOWN)
@@ -3828,17 +3891,17 @@ async def handle_user_text_input(update: Update, context: ContextTypes.DEFAULT_T
 
         preview_short = f"`{raw_content[:200]}...`" if len(raw_content) > 200 else f"`{raw_content}`"
         await update.message.reply_text(
-            f"🎉 *Single Stock Unit Added Successfully!*\n\n"
+            f"🎉 *Stock Unit Saved Successfully!*\n\n"
             f"📦 *Product:* {prod_name} (ID `#{c_id}`)\n"
-            f"➕ *Added:* `1` item (entire message saved as 1 unit)\n"
+            f"➕ *Added in this session:* `+{session_added}` items\n"
             f"📊 *Total In Stock:* `{total_stock}` available\n\n"
             f"📄 *Payload Preview:*\n{preview_short}\n\n"
-            "📢 _Notification sent to all bot users & group!_",
+            "⏳ _Notification to users is PAUSED. Add more stock or click Done below to broadcast to all users!_",
             parse_mode=ParseMode.MARKDOWN,
             reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("➕ Add Another Item (Large Text)", callback_data=f"admin_addstock_single_{c_id}")],
-                [InlineKeyboardButton("👁️ Preview Stock", callback_data=f"admin_viewstock_{c_id}")],
-                [InlineKeyboardButton("📦 Custom Products", callback_data="admin_custom_prods")]
+                [InlineKeyboardButton("➕ Add More Stock (Next Item)", callback_data=f"admin_addstock_more_{c_id}")],
+                [InlineKeyboardButton("✅ Done / Finish & Broadcast Alert", callback_data=f"admin_finish_stock_broadcast_{c_id}")],
+                [InlineKeyboardButton("📦 Finish Silently (No Broadcast)", callback_data=f"admin_finish_stock_silent_{c_id}")]
             ])
         )
         return
@@ -3925,24 +3988,20 @@ async def handle_user_text_input(update: Update, context: ContextTypes.DEFAULT_T
         prod_name = prod.get("name") if prod else f"Product #{c_id}"
         total_stock = prod.get("stock_count", added_count) if prod else added_count
 
-        # Broadcast restock alert to Notification Group and all registered users
-        if added_count > 0 and prod:
-            try:
-                restocked_item = [{
-                    "id": 90000 + c_id,
-                    "name": prod_name,
-                    "sell_price": float(prod.get("price", 0.0)),
-                    "stock_count": total_stock,
-                    "added_count": added_count,
-                    "is_custom": True
-                }]
-                await catalog_sync.notify_new_products_alert(
-                    bot=context.bot,
-                    new_products=[],
-                    restocked_products=restocked_item
-                )
-            except Exception as e:
-                logger.error(f"Error broadcasting custom stock alert: {e}")
+        # Track in session for final batch broadcast
+        session = context.user_data.setdefault("pending_stock_session", {})
+        p_data = session.setdefault(str(c_id), {
+            "id": 90000 + c_id,
+            "name": prod_name,
+            "sell_price": float(prod.get("price", 0.0)),
+            "stock_count": total_stock,
+            "added_count": 0,
+            "is_custom": True,
+            "is_new": False
+        })
+        p_data["added_count"] += added_count
+        p_data["stock_count"] = total_stock
+        session_added = p_data["added_count"]
 
         # If added by Assistant, alert Super Admin
         if is_assistant(user.id):
@@ -3951,25 +4010,24 @@ async def handle_user_text_input(update: Update, context: ContextTypes.DEFAULT_T
                     "👨‍💼 *Assistant Stock Activity Report*\n\n"
                     f"👤 *Assistant:* {user.first_name} (`{user.id}`)\n"
                     f"📦 *Product:* {prod_name} (ID `#{c_id}`)\n"
-                    f"➕ *Added Items:* `+{added_count}` stock\n"
-                    f"📊 *Current Total Stock:* `{total_stock}` in stock\n"
-                    f"📢 *Broadcast:* Sent to all users & notification group."
+                    f"➕ *Added Items:* `+{added_count}` stock (Session total: `{session_added}`)\n"
+                    f"📊 *Current Total Stock:* `{total_stock}` in stock"
                 )
                 await context.bot.send_message(chat_id=ADMIN_ID, text=admin_alert, parse_mode=ParseMode.MARKDOWN)
-            except Exception as e:
-                logger.error(f"Error alerting admin of assistant activity: {e}")
+            except Exception:
+                pass
 
         await update.message.reply_text(
-            f"🎉 *Stock Added Successfully & Broadcasted!*\n\n"
+            f"🎉 *Batch Stock Saved Successfully!*\n\n"
             f"📦 *Product:* {prod_name} (ID `#{c_id}`)\n"
-            f"➕ *Added Items:* `{added_count}` accounts/keys\n"
+            f"➕ *Added in this batch:* `+{added_count}` items (Session total: `{session_added}`)\n"
             f"📊 *Total In Stock:* `{total_stock}` available\n\n"
-            "📢 *Notification sent:* All bot users and notification group have been informed of this new stock!",
+            "⏳ _Notification to users is PAUSED. Add more stock or click Done below to finish and broadcast!_",
             parse_mode=ParseMode.MARKDOWN,
             reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("👁️ Preview Stock", callback_data=f"admin_viewstock_{c_id}")],
                 [InlineKeyboardButton("➕ Add More Stock", callback_data=f"admin_addstock_{c_id}")],
-                [InlineKeyboardButton("📦 Custom Products", callback_data="admin_custom_prods")]
+                [InlineKeyboardButton("✅ Done / Finish & Broadcast Alert", callback_data=f"admin_finish_stock_broadcast_{c_id}")],
+                [InlineKeyboardButton("📦 Finish Silently (No Broadcast)", callback_data=f"admin_finish_stock_silent_{c_id}")]
             ])
         )
         return
