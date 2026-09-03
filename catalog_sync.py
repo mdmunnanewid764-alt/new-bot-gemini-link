@@ -363,7 +363,7 @@ async def get_local_catalog(filter_gemini: Optional[bool] = None) -> List[Dict[s
                 res = await cursor.fetchall()
                 rows = [dict(r) for r in res]
 
-    products = []
+    api_products = []
     for r in rows:
         p_dict = dict(r)
         if should_filter_gemini and "gemini" not in p_dict["name"].lower():
@@ -375,9 +375,10 @@ async def get_local_catalog(filter_gemini: Optional[bool] = None) -> List[Dict[s
         p_dict["margin"] = margin
         p_dict["supplier_price"] = supplier_price
         p_dict["is_custom"] = False
-        products.append(p_dict)
+        api_products.append(p_dict)
 
-    # Seamlessly merge Admin In-House Custom Products (Gmail:Pass, Accounts, etc.)
+    custom_products_list = []
+    # Priority 1: Admin / Assistant In-House Custom Products (Show at the very TOP of Page 1)
     try:
         custom_prods = await database.get_custom_products(only_active=True)
         for cp in custom_prods:
@@ -385,7 +386,7 @@ async def get_local_catalog(filter_gemini: Optional[bool] = None) -> List[Dict[s
             if stock_cnt > 0:
                 c_id = int(cp["id"])
                 mapped_id = 90000 + c_id
-                products.append({
+                custom_products_list.append({
                     "id": mapped_id,
                     "product_id": mapped_id,
                     "name": cp["name"],
@@ -400,6 +401,8 @@ async def get_local_catalog(filter_gemini: Optional[bool] = None) -> List[Dict[s
     except Exception as e:
         logger.error(f"Error merging custom products in catalog: {e}")
 
+    # Combine: Custom products first (top priority), followed by API products
+    products = custom_products_list + api_products
     return products
 
 async def get_gemini_products() -> List[Dict[str, Any]]:
