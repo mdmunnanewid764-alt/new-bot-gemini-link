@@ -1,4 +1,5 @@
 import os
+import json
 import logging
 from datetime import datetime
 from dotenv import load_dotenv
@@ -503,6 +504,39 @@ async def get_setting(key: str, default: str = None) -> str:
     if val is not None:
         _SETTINGS_CACHE[k_str] = val
     return val
+
+async def get_pinned_product_ids() -> list[int]:
+    """Retrieve list of pinned product IDs ordered by top priority."""
+    val = await get_setting("pinned_product_ids", "[]")
+    try:
+        data = json.loads(val)
+        if isinstance(data, list):
+            return [int(x) for x in data if str(x).lstrip("-").isdigit()]
+    except Exception:
+        pass
+    return []
+
+async def set_pinned_product_ids(pinned_ids: list[int]) -> list[int]:
+    clean = [int(x) for x in pinned_ids if str(x).lstrip("-").isdigit()]
+    unique_pins = []
+    for x in clean:
+        if x not in unique_pins:
+            unique_pins.append(x)
+    await set_setting("pinned_product_ids", json.dumps(unique_pins))
+    return unique_pins
+
+async def toggle_product_pin(product_id: int) -> bool:
+    """Toggle pin on product. If pinned -> unpins. If not -> puts at index 0 (Top Rank)."""
+    p_id = int(product_id)
+    pins = await get_pinned_product_ids()
+    if p_id in pins:
+        pins.remove(p_id)
+        await set_pinned_product_ids(pins)
+        return False
+    else:
+        pins.insert(0, p_id)
+        await set_pinned_product_ids(pins)
+        return True
 
 async def record_order(user_id: int, order_id: Any, product_id: int, product_name: str, quantity: int, total: float, status: str, delivered_keys: list):
     now = datetime.utcnow().isoformat()

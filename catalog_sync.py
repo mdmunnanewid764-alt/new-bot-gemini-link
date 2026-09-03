@@ -401,8 +401,29 @@ async def get_local_catalog(filter_gemini: Optional[bool] = None) -> List[Dict[s
     except Exception as e:
         logger.error(f"Error merging custom products in catalog: {e}")
 
-    # Combine: Custom products first (top priority), followed by API products
-    products = custom_products_list + api_products
+    # Base order: In-house custom products first, followed by supplier API products
+    unpinned_products = custom_products_list + api_products
+
+    # Priority 0 (Absolute Top): Admin Pinned Products
+    try:
+        pinned_ids = await database.get_pinned_product_ids()
+        if pinned_ids:
+            prod_map = {p["id"]: p for p in unpinned_products}
+            pinned_list = []
+            for pid in pinned_ids:
+                if pid in prod_map:
+                    p_item = prod_map[pid]
+                    p_item["is_pinned"] = True
+                    pinned_list.append(p_item)
+
+            remaining_list = [p for p in unpinned_products if p["id"] not in pinned_ids]
+            products = pinned_list + remaining_list
+        else:
+            products = unpinned_products
+    except Exception as e:
+        logger.error(f"Error ordering pinned products: {e}")
+        products = unpinned_products
+
     return products
 
 async def get_gemini_products() -> List[Dict[str, Any]]:
