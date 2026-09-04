@@ -291,8 +291,17 @@ async def handle_navigation(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await handle_user_api_toggle_callback(query, context)
     elif data == "nav_api_docs":
         await handle_user_api_docs_callback(query, context)
-    elif data == "nav_orders":
-        await show_orders_history(query, context)
+    elif data == "nav_orders" or data.startswith("nav_orders_page_"):
+        page = 1
+        if data.startswith("nav_orders_page_"):
+            try:
+                page = int(data.split("_")[-1])
+            except ValueError:
+                page = 1
+        await show_orders_history(query, context, page=page)
+    elif data.startswith("user_order_detail_"):
+        order_pk = int(data.replace("user_order_detail_", ""))
+        await handle_user_order_detail_callback(query, context, order_pk)
     elif data == "nav_help":
         await show_help(query, context)
     elif data == "nav_admin":
@@ -828,11 +837,13 @@ async def handle_user_api_docs_callback(query, context: ContextTypes.DEFAULT_TYP
     ]
     await query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(buttons))
 
-async def show_orders_history(query, context: ContextTypes.DEFAULT_TYPE):
-    user = query.from_user
-    local_orders = await database.get_user_orders(user.id, limit=10)
+ORDERS_PER_PAGE = 4
 
-    if not local_orders:
+async def show_orders_history(query, context: ContextTypes.DEFAULT_TYPE, page: int = 1):
+    user = query.from_user
+    all_orders = await database.get_user_orders(user.id, limit=100)
+
+    if not all_orders:
         text = "📜 *Order History*\n\nYou haven't placed any orders yet."
         buttons = [
             [InlineKeyboardButton("🛒 Browse Shop", callback_data="nav_products")],
@@ -841,22 +852,117 @@ async def show_orders_history(query, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(buttons))
         return
 
-    text = f"📜 *Order History (Last {len(local_orders)})*\n\n"
-    for o in local_orders:
+    total_orders = len(all_orders)
+    total_pages = max(1, (total_orders + ORDERS_PER_PAGE - 1) // ORDERS_PER_PAGE)
+    current_page = max(1, min(page, total_pages))
+
+    start_idx = (current_page - 1) * ORDERS_PER_PAGE
+    end_idx = start_idx + ORDERS_PER_PAGE
+    page_orders = all_orders[start_idx:end_idx]
+
+    text = (
+        f"📜 *Your Order History (Page {current_page}/{total_pages})*\n\n"
+        f"🛍️ *Total Orders Placed:* `{total_orders}`\n"
+        "Tap on any order below to view and copy your credentials/keys:\n\n"
+    )
+
+    buttons = []
+    for o in page_orders:
+        pk_id = o["id"]
+        order_id = o.get("order_id") or pk_id
+        p_name = o.get("product_name", "Digital Product")
+        qty = o.get("quantity", 1)
+        tot = float(o.get("total", 0.0))
+        st = str(o.get("status", "completed")).upper()
+        date_str = str(o.get("created_at", ""))[:16].replace("T", " ")
+
         text += (
-            f"🆔 *Order #{o['order_id']}*\n"
-            f"📦 {o['product_name']} (x{o['quantity']})\n"
-            f"💰 Total: `${o['total']:.2f}` USD | Status: `{o['status']}`\n"
+            f"📦 *Order #{order_id}*\n"
+            f"🔹 *Product:* {p_name} (x{qty})\n"
+            f"💵 *Paid:* `${tot:.2f}` USD | *Status:* `{st}`\n"
+            f"📅 *Date:* `{date_str}`\n"
+            "-------------------------------\n"
         )
-        if o.get("delivered_keys"):
-            text += f"🔑 *Keys:* `{o['delivered_keys']}`\n"
-        text += "-------------------------------\n"
+
+        btn_text = f"🔑 View Credentials (Order #{order_id})"
+        buttons.append([InlineKeyboardButton(btn_text, callback_data=f"user_order_detail_{pk_id}")])
+
+    # Navigation buttons
+    if total_pages > 1:
+        nav_row = []
+        if current_page > 1:
+            nav_row.append(InlineKeyboardButton("⬅️ Prev", callback_data=f"nav_orders_page_{current_page - 1}"))
+        nav_row.append(InlineKeyboardButton(f"📄 {current_page}/{total_pages}", callback_data=f"nav_orders_page_{current_page}"))
+        if current_page < total_pages:
+            nav_row.append(InlineKeyboardButton("Next ➡️", callback_data=f"nav_orders_page_{current_page + 1}"))
+        buttons.append(nav_row)
+
+    buttons.append([
+        InlineKeyboardButton("🔄 Refresh", callback_data=f"nav_orders_page_{current_page}"),
+        InlineKeyboardButton("🔙 Main Menu", callback_data="nav_main")
+    ])
+
+    try:
+        await query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(buttons))
+    except Exception as e:
+        logger.error(f"Error rendering markdown order history: {e}")
+        clean_text = text.replace("*", "").replace("`", "").replace("_", "")
+        await query.edit_message_text(clean_text, reply_markup=InlineKeyboardMarkup(buttons))
+
+async def handle_user_order_detail_callback(query, context: ContextTypes.DEFAULT_TYPE, order_pk: int):
+    user = query.from_user
+    order = await database.get_order_by_id(order_pk)
+    if not order:
+        await query.answer("❌ Order details not found.", show_alert=True)
+        await show_orders_history(query, context)
+        return
+
+    # Security check
+    if int(order.get("user_id", 0)) != int(user.id) and not is_super_admin(user.id):
+        await query.answer("❌ Unauthorized access.", show_alert=True)
+        return
+
+    order_id = order.get("order_id") or order["id"]
+    p_name = order.get("product_name", "Digital Item")
+    qty = order.get("quantity", 1)
+    tot = float(order.get("total", 0.0))
+    st = str(order.get("status", "delivered")).upper()
+    date_str = str(order.get("created_at", ""))[:19].replace("T", " ")
+    keys = str(order.get("delivered_keys", "")).strip() or "No keys recorded."
+
+    # Prevent Telegram 4096 character overflow
+    keys_display = keys if len(keys) <= 3000 else keys[:3000] + "\n...[truncated for display]"
+
+    text = (
+        f"📜 *Order Details & Item Delivery*\n\n"
+        f"🆔 *Order ID:* `#{order_id}`\n"
+        f"📦 *Product:* {p_name}\n"
+        f"📊 *Quantity:* `{qty}` unit(s)\n"
+        f"💰 *Total Paid:* `${tot:.2f}` USD\n"
+        f"🟢 *Status:* `{st}`\n"
+        f"📅 *Delivered Date:* `{date_str} UTC`\n\n"
+        "🔑 *Your Delivered Item / Credentials:*\n"
+        f"```text\n{keys_display}\n```\n"
+        "💡 _Tap and hold on the box above to copy instantly!_"
+    )
 
     buttons = [
-        [InlineKeyboardButton("🔄 Refresh", callback_data="nav_orders")],
-        [InlineKeyboardButton("🔙 Main Menu", callback_data="nav_main")]
+        [InlineKeyboardButton("🔙 Back to Orders History", callback_data="nav_orders")],
+        [InlineKeyboardButton("🏠 Main Menu", callback_data="nav_main")]
     ]
-    await query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(buttons))
+
+    try:
+        await query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(buttons))
+    except Exception as e:
+        logger.error(f"Error displaying order detail: {e}")
+        fallback_text = (
+            f"Order Details (Order #{order_id})\n"
+            f"Product: {p_name} (x{qty})\n"
+            f"Paid: ${tot:.2f} USD\n"
+            f"Date: {date_str}\n\n"
+            f"Credentials:\n{keys_display}\n"
+        )
+        await query.edit_message_text(fallback_text, reply_markup=InlineKeyboardMarkup(buttons))
 
 async def show_help(query, context: ContextTypes.DEFAULT_TYPE):
     text = (

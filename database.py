@@ -597,6 +597,24 @@ async def get_user_orders(user_id: int, limit: int = 10) -> list[dict]:
             rows = await cursor.fetchall()
             return [dict(r) for r in rows]
 
+async def get_order_by_id(order_pk: int) -> dict:
+    """Retrieve a single order by its primary key ID."""
+    if USE_POSTGRES:
+        try:
+            pool = await get_pg_pool()
+            async with pool.acquire() as conn:
+                row = await conn.fetchrow("SELECT * FROM orders_local WHERE id = $1", int(order_pk))
+                return dict(row) if row else None
+        except Exception as e:
+            logger.error(f"PG get_order_by_id error: {e}")
+
+    import aiosqlite
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute("SELECT * FROM orders_local WHERE id = ?", (int(order_pk),)) as cursor:
+            row = await cursor.fetchone()
+            return dict(row) if row else None
+
 async def get_stats() -> dict:
     if USE_POSTGRES:
         try:
