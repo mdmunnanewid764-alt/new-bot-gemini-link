@@ -1914,6 +1914,109 @@ async def handle_admin_pin_products_callback(update_or_query, context: ContextTy
     else:
         await update_or_query.message.reply_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(buttons))
 
+async def handle_admin_binance_deposits_callback(update_or_query, context: ContextTypes.DEFAULT_TYPE, page: int = 1):
+    query = update_or_query if hasattr(update_or_query, "edit_message_text") else None
+    if query:
+        try:
+            await query.answer("Fetching live Binance deposits...")
+        except Exception:
+            pass
+
+    try:
+        deposits = await binance_client.get_recent_deposits(limit=50)
+    except Exception as e:
+        logger.error(f"Error fetching binance deposits: {e}")
+        deposits = []
+
+    if not deposits:
+        text = (
+            "🟡 *Binance Live Deposits & Reconciliation*\n\n"
+            "⚠️ _Could not fetch deposits from Binance API or no deposits found in the last 30 days._\n\n"
+            "Check your Binance API Keys in the Admin Dashboard."
+        )
+        buttons = [
+            [InlineKeyboardButton("🔄 Retry", callback_data="admin_binance_deposits")],
+            [InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin")]
+        ]
+        if query:
+            await query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(buttons))
+        else:
+            await update_or_query.message.reply_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(buttons))
+        return
+
+    # Cross-check each Binance deposit against our database
+    unclaimed = []
+    claimed = []
+
+    for d in deposits:
+        tx = str(d.get("txId", "")).strip()
+        amt = float(d.get("amount", 0.0))
+        coin = str(d.get("coin", "USDT"))
+        status = d.get("status")
+        itime = d.get("insertTime", 0)
+        dt_str = datetime.fromtimestamp(itime / 1000.0).strftime("%Y-%m-%d %H:%M") if itime else "N/A"
+
+        # Check in DB
+        db_rec = await database.get_deposit_by_txhash(tx)
+        is_used = await database.is_txhash_used(tx)
+
+        item = {
+            "txId": tx,
+            "amount": amt,
+            "coin": coin,
+            "status": status,
+            "time": dt_str,
+            "db_rec": db_rec,
+            "is_used": is_used
+        }
+
+        if db_rec or is_used:
+            claimed.append(item)
+        else:
+            unclaimed.append(item)
+
+    text = (
+        "🟡 *Binance Live Deposits & Reconciliation*\n\n"
+        f"📊 *Total Live Deposits:* `{len(deposits)}`\n"
+        f"⚠️ *Unclaimed in Bot:* `{len(unclaimed)}` transaction(s)\n"
+        f"🟢 *Claimed & Verified:* `{len(claimed)}` transaction(s)\n\n"
+    )
+
+    buttons = []
+
+    if unclaimed:
+        text += "🔔 *Unclaimed Deposits (Received in Binance, not claimed in bot):*\n\n"
+        for u in unclaimed[:6]:
+            tx_clean = u['txId'].replace("Off-chain transfer ", "")
+            tx_short = f"{tx_clean[:8]}...{tx_clean[-6:]}" if len(tx_clean) > 16 else tx_clean
+            text += (
+                f"• 🟡 *+${u['amount']:.2f} {u['coin']}* | `{u['time']}`\n"
+                f"  🆔 `Tx: {tx_clean}`\n\n"
+            )
+            buttons.append([
+                InlineKeyboardButton(f"🔒 Lock #{tx_short}", callback_data=f"admin_locktx_{tx_clean}"),
+                InlineKeyboardButton(f"👤 Credit (+${u['amount']:.2f})", callback_data=f"admin_credittx_{tx_clean}_{u['amount']}"),
+            ])
+    else:
+        text += "✅ *All recent Binance deposits are 100% verified & accounted for in bot DB!*\n\n"
+
+    if claimed:
+        text += "🟢 *Recent Claimed Transactions:*\n"
+        for c in claimed[:3]:
+            tx_c = c['txId'].replace("Off-chain transfer ", "")
+            u_id = c['db_rec'].get('user_id') if c['db_rec'] else 'Locked'
+            text += f"• 🟢 `+${c['amount']:.2f}` | User `{u_id}` | `Tx: {tx_c[:12]}...`\n"
+
+    buttons.append([
+        InlineKeyboardButton("🔄 Refresh", callback_data="admin_binance_deposits"),
+        InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin")
+    ])
+
+    if query:
+        await query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(buttons))
+    else:
+        await update_or_query.message.reply_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(buttons))
+
 async def handle_admin_sync_callback(query, context: ContextTypes.DEFAULT_TYPE):
     await query.answer("🔄 Syncing catalog with shop API...")
     try:
@@ -2139,6 +2242,27 @@ async def handle_admin_router(update: Update, context: ContextTypes.DEFAULT_TYPE
         await handle_admin_balance_callback(query, context)
     elif data == "admin_binance_deposits":
         await handle_admin_binance_deposits_callback(query, context)
+    elif data.startswith("admin_locktx_"):
+        tx_hash = data.replace("admin_locktx_", "").strip()
+        res = await database.admin_lock_txhash(tx_hash, note="Locked via Admin Binance Reconciler")
+        await query.answer(f"🔒 TxID '{tx_hash}' has been permanently locked in bot DB! No user can ever claim it.", show_alert=True)
+        await handle_admin_binance_deposits_callback(query, context)
+    elif data.startswith("admin_credittx_"):
+        parts = data.split("_")
+        tx_hash = parts[2]
+        amt = float(parts[3])
+        context.user_data["waiting_for_admin_credit_tx_user"] = {
+            "tx_hash": tx_hash,
+            "amount": amt
+        }
+        await query.edit_message_text(
+            f"👤 *Credit Binance Deposit to User*\n\n"
+            f"🆔 *TxID:* `{tx_hash}`\n"
+            f"💰 *Amount:* `${amt:.2f}` USD\n\n"
+            "Send the **User ID** or **@Username** in your next message to credit this balance and permanently bind this transaction to that user:",
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="admin_binance_deposits")]])
+        )
     elif data == "admin_binance_balance":
         await handle_admin_binance_balance_callback(query, context)
     elif data == "admin_binance_keys":
@@ -3680,6 +3804,51 @@ async def handle_user_text_input(update: Update, context: ContextTypes.DEFAULT_T
                 [InlineKeyboardButton("💵 Back to Margins", callback_data="admin_margins")],
                 [InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin")]
             ])
+        )
+        return
+
+    # ── Admin: Credit Unclaimed Binance TxID to User ──
+    if context.user_data.get("waiting_for_admin_credit_tx_user") and is_super_admin(user.id):
+        tx_data = context.user_data.pop("waiting_for_admin_credit_tx_user")
+        tx_hash = tx_data["tx_hash"]
+        amt = float(tx_data["amount"])
+
+        target_uid = await database.get_user_id_by_identifier(text.strip())
+        if not target_uid:
+            await update.message.reply_text(
+                f"❌ User `{text.strip()}` not found. Please enter a valid numerical User ID or active @username.",
+                parse_mode=ParseMode.MARKDOWN,
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to Binance Deposits", callback_data="admin_binance_deposits")]])
+            )
+            return
+
+        res = await database.admin_manual_credit_deposit(target_uid, tx_hash, amt, note="Admin Manual Credit from Binance Live Reconciler")
+
+        # Send notification to user
+        try:
+            await context.bot.send_message(
+                chat_id=target_uid,
+                text=(
+                    "🎉 *Deposit Confirmed & Balance Added!*\n\n"
+                    f"💰 *Amount:* `+${amt:.2f}` USD\n"
+                    f"💳 *New Balance:* `${res['balance_after']:.2f}` USD\n"
+                    f"🆔 *Transaction ID:* `{tx_hash}`\n\n"
+                    "Your balance is ready to use in the store!"
+                ),
+                parse_mode=ParseMode.MARKDOWN
+            )
+        except Exception:
+            pass
+
+        await update.message.reply_text(
+            f"✅ *Binance Deposit Successfully Credited!*\n\n"
+            f"👤 *User:* `{target_uid}`\n"
+            f"💰 *Credited Amount:* `+${amt:.2f}` USD\n"
+            f"💳 *User New Balance:* `${res['balance_after']:.2f}` USD\n"
+            f"🆔 *TxID Bound:* `{tx_hash}`\n\n"
+            "🔒 _This transaction has been permanently marked as PAID and cannot be claimed again._",
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🟡 Binance Deposits", callback_data="admin_binance_deposits")]])
         )
         return
 

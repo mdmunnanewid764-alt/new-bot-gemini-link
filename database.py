@@ -1177,12 +1177,12 @@ async def is_txhash_used(tx_hash: str, current_trade_no: str = None) -> bool:
             async with pool.acquire() as conn:
                 if current_trade_no:
                     count = await conn.fetchval(
-                        "SELECT COUNT(*) FROM deposits WHERE LOWER(tx_hash) = $1 AND merchant_trade_no != $2 AND status = 'PAID'",
+                        "SELECT COUNT(*) FROM deposits WHERE LOWER(tx_hash) = $1 AND merchant_trade_no != $2 AND status IN ('PAID', 'LOCKED_BY_ADMIN')",
                         clean_tx, current_trade_no
                     )
                 else:
                     count = await conn.fetchval(
-                        "SELECT COUNT(*) FROM deposits WHERE LOWER(tx_hash) = $1 AND status = 'PAID'",
+                        "SELECT COUNT(*) FROM deposits WHERE LOWER(tx_hash) = $1 AND status IN ('PAID', 'LOCKED_BY_ADMIN')",
                         clean_tx
                     )
                 return bool(count and count > 0)
@@ -1193,19 +1193,147 @@ async def is_txhash_used(tx_hash: str, current_trade_no: str = None) -> bool:
     async with aiosqlite.connect(DB_PATH) as db:
         if current_trade_no:
             async with db.execute(
-                "SELECT COUNT(*) FROM deposits WHERE LOWER(tx_hash) = LOWER(?) AND merchant_trade_no != ? AND status = 'PAID'",
+                "SELECT COUNT(*) FROM deposits WHERE LOWER(tx_hash) = LOWER(?) AND merchant_trade_no != ? AND status IN ('PAID', 'LOCKED_BY_ADMIN')",
                 (clean_tx, current_trade_no)
             ) as cursor:
                 row = await cursor.fetchone()
                 return bool(row and row[0] > 0)
         else:
             async with db.execute(
-                "SELECT COUNT(*) FROM deposits WHERE LOWER(tx_hash) = LOWER(?) AND status = 'PAID'",
+                "SELECT COUNT(*) FROM deposits WHERE LOWER(tx_hash) = LOWER(?) AND status IN ('PAID', 'LOCKED_BY_ADMIN')",
                 (clean_tx,)
             ) as cursor:
                 row = await cursor.fetchone()
                 return bool(row and row[0] > 0)
     return False
+
+async def get_deposit_by_txhash(tx_hash: str) -> dict:
+    """Find an existing deposit by transaction hash."""
+    clean_tx = str(tx_hash).strip().lower()
+    if not clean_tx:
+        return None
+    if USE_POSTGRES:
+        try:
+            pool = await get_pg_pool()
+            async with pool.acquire() as conn:
+                row = await conn.fetchrow("SELECT * FROM deposits WHERE LOWER(tx_hash) = $1 ORDER BY id DESC LIMIT 1", clean_tx)
+                return dict(row) if row else None
+        except Exception as e:
+            logger.error(f"PG get_deposit_by_txhash error: {e}")
+
+    import aiosqlite
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute("SELECT * FROM deposits WHERE LOWER(tx_hash) = LOWER(?) ORDER BY id DESC LIMIT 1", (clean_tx,)) as cursor:
+            row = await cursor.fetchone()
+            return dict(row) if row else None
+
+async def admin_lock_txhash(tx_hash: str, amount: float = 0.0, note: str = "Locked by Admin") -> dict:
+    """Permanently lock a TxID in the bot database so no user can ever claim/replay it."""
+    clean_tx = str(tx_hash).strip()
+    now = datetime.utcnow().isoformat()
+    trade_no = f"ADMIN-LOCK-{int(datetime.utcnow().timestamp())}-{clean_tx[-8:] if len(clean_tx) >= 8 else clean_tx}"
+    admin_id = 6575066703
+
+    if USE_POSTGRES:
+        try:
+            pool = await get_pg_pool()
+            async with pool.acquire() as conn:
+                await conn.execute("""
+                    INSERT INTO deposits (merchant_trade_no, user_id, amount, status, tx_hash, created_at)
+                    VALUES ($1, $2, $3, 'LOCKED_BY_ADMIN', $4, $5)
+                    ON CONFLICT (merchant_trade_no) DO UPDATE SET status = 'LOCKED_BY_ADMIN', tx_hash = EXCLUDED.tx_hash
+                """, trade_no, admin_id, float(amount), clean_tx, now)
+                await log_financial_audit(
+                    event_type="TX_LOCKED",
+                    user_id=admin_id,
+                    amount=float(amount),
+                    balance_before=0.0,
+                    balance_after=0.0,
+                    reason=f"Admin permanently locked TxID {clean_tx}: {note}",
+                    performed_by=admin_id
+                )
+                return {"trade_no": trade_no, "tx_hash": clean_tx, "status": "LOCKED_BY_ADMIN", "amount": amount}
+        except Exception as e:
+            logger.error(f"PG admin_lock_txhash error: {e}")
+
+    import aiosqlite
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("""
+            INSERT INTO deposits (merchant_trade_no, user_id, amount, status, tx_hash, created_at)
+            VALUES (?, ?, ?, 'LOCKED_BY_ADMIN', ?, ?)
+            ON CONFLICT (merchant_trade_no) DO UPDATE SET status = 'LOCKED_BY_ADMIN', tx_hash = excluded.tx_hash
+        """, (trade_no, admin_id, float(amount), clean_tx, now))
+        await db.commit()
+
+    await log_financial_audit(
+        event_type="TX_LOCKED",
+        user_id=admin_id,
+        amount=float(amount),
+        balance_before=0.0,
+        balance_after=0.0,
+        reason=f"Admin permanently locked TxID {clean_tx}: {note}",
+        performed_by=admin_id
+    )
+    return {"trade_no": trade_no, "tx_hash": clean_tx, "status": "LOCKED_BY_ADMIN", "amount": amount}
+
+async def admin_manual_credit_deposit(user_id: int, tx_hash: str, amount: float, note: str = "Admin Manual Credit") -> dict:
+    """Manually credit a live Binance deposit to a user and permanently bind the TxID."""
+    clean_tx = str(tx_hash).strip()
+    u_id = int(user_id)
+    amt = round(float(amount), 2)
+    now = datetime.utcnow().isoformat()
+    trade_no = f"ADMIN-MANUAL-{int(datetime.utcnow().timestamp())}-{clean_tx[-8:] if len(clean_tx) >= 8 else clean_tx}"
+
+    bal_before = await get_user_balance(u_id)
+    if USE_POSTGRES:
+        try:
+            pool = await get_pg_pool()
+            async with pool.acquire() as conn:
+                await conn.execute("""
+                    INSERT INTO deposits (merchant_trade_no, user_id, amount, status, tx_hash, created_at)
+                    VALUES ($1, $2, $3, 'PAID', $4, $5)
+                """, trade_no, u_id, amt, clean_tx, now)
+                await conn.execute("""
+                    INSERT INTO user_balances (user_id, balance)
+                    VALUES ($1, $2)
+                    ON CONFLICT(user_id) DO UPDATE SET balance = user_balances.balance + $2
+                """, u_id, amt)
+        except Exception as e:
+            logger.error(f"PG admin_manual_credit_deposit error: {e}")
+    else:
+        import aiosqlite
+        async with aiosqlite.connect(DB_PATH) as db:
+            await db.execute("""
+                INSERT INTO deposits (merchant_trade_no, user_id, amount, status, tx_hash, created_at)
+                VALUES (?, ?, ?, 'PAID', ?, ?)
+            """, (trade_no, u_id, amt, clean_tx, now))
+            await db.execute("""
+                INSERT INTO user_balances (user_id, balance)
+                VALUES (?, ?)
+                ON CONFLICT(user_id) DO UPDATE SET balance = balance + ?
+            """, (u_id, amt, amt))
+            await db.commit()
+
+    bal_after = await get_user_balance(u_id)
+    await log_financial_audit(
+        event_type="MANUAL_DEPOSIT_CREDIT",
+        user_id=u_id,
+        amount=amt,
+        balance_before=bal_before,
+        balance_after=bal_after,
+        reason=f"Admin manually credited TxID {clean_tx}: {note}",
+        performed_by=6575066703
+    )
+    return {
+        "trade_no": trade_no,
+        "user_id": u_id,
+        "amount": amt,
+        "tx_hash": clean_tx,
+        "balance_before": bal_before,
+        "balance_after": bal_after,
+        "status": "PAID"
+    }
 
 async def get_all_deposits(limit: int = 30, status: str = None) -> list[dict]:
     """Retrieve full history of deposits with user info."""
