@@ -1915,8 +1915,8 @@ async def handle_admin_binance_deposits_callback(update_or_query, context: Conte
     text = (
         "🟡 *Binance Live Deposits & Reconciliation*\n\n"
         f"📊 *Total Live Deposits:* `{len(deposits)}`\n"
-        f"⚠️ *Unclaimed in Bot:* `{len(unclaimed)}` transaction(s)\n"
-        f"🟢 *Claimed & Verified:* `{len(claimed)}` transaction(s)\n\n"
+        f"⚠️ *Unclaimed (আন-ভেরিফাইড):* `{len(unclaimed)}` transaction(s)\n"
+        f"🟢 *Claimed (ভেরিফাইড):* `{len(claimed)}` transaction(s)\n\n"
     )
 
     buttons = []
@@ -1933,7 +1933,8 @@ async def handle_admin_binance_deposits_callback(update_or_query, context: Conte
         if "unclaimed_tx_map" not in context.bot_data:
             context.bot_data["unclaimed_tx_map"] = {}
 
-        text += f"🔔 *Unclaimed Deposits (Page {page}/{total_pages}):*\n\n"
+        text += f"⚠️ *আন-ভেরিফাইড ট্রানজেকশন (Page {page}/{total_pages}):*\n"
+        text += "_নিচের এই পেমেন্টগুলো বাইন্যান্সে ঢুকেছে কিন্তু কোনো ইউজার এখনও ক্লেইম/ভেরিফাই করেনি:_\n\n"
         for u in page_unclaimed:
             tx_clean = u['cleanTx']
             token = hashlib.md5(tx_clean.encode()).hexdigest()[:10]
@@ -1946,7 +1947,8 @@ async def handle_admin_binance_deposits_callback(update_or_query, context: Conte
             tx_short = f"{tx_clean[:8]}...{tx_clean[-6:]}" if len(tx_clean) > 16 else tx_clean
             text += (
                 f"• 🟡 *+${u['amount']:.2f} {u['coin']}* | `{u['time']}`\n"
-                f"  🆔 `Tx: {tx_clean}`\n\n"
+                f"  🆔 `Tx: {tx_clean}`\n"
+                f"  📌 *স্ট্যাটাস:* ⚠️ _আনক্লেইমড (ইউজার এখনো ভেরিফাই করেনি)_\n\n"
             )
             buttons.append([
                 InlineKeyboardButton(f"🔒 Lock #{tx_short}", callback_data=f"admin_ltx_{token}"),
@@ -1963,14 +1965,15 @@ async def handle_admin_binance_deposits_callback(update_or_query, context: Conte
                 nav_row.append(InlineKeyboardButton("Next ➡️", callback_data=f"admin_bpage_{page+1}"))
             buttons.append(nav_row)
     else:
-        text += "✅ *All recent Binance deposits are 100% verified & accounted for in bot DB!*\n\n"
+        text += "✅ *সবগুলো বাইন্যান্স ডিপোজিট ১০০% ভেরিফাইড ও ইউজারদের ব্যালেন্সে যুক্ত আছে!*\n\n"
 
     if claimed:
-        text += "🟢 *Recent Claimed Transactions:*\n"
+        text += "━━━━━━━━━━━━━━━━━━━\n"
+        text += "🟢 *সাম্প্রতিক ভেরিফাইড ট্রানজেকশন (ইউজার অলরেডি ব্যালেন্স পেয়ে গেছে):*\n"
         for c in claimed[:3]:
             tx_c = c['cleanTx']
             u_id = c['db_rec'].get('user_id') if c['db_rec'] else 'Locked'
-            text += f"• 🟢 `+${c['amount']:.2f}` | User `{u_id}` | `Tx: {tx_c[:12]}...`\n"
+            text += f"• 🟢 `+${c['amount']:.2f}` | ইউজার: `{u_id}` | `Tx: {tx_c[:12]}...` (✅ ক্লেইমড)\n"
 
     buttons.append([
         InlineKeyboardButton("🔄 Refresh", callback_data="admin_binance_deposits"),
