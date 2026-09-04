@@ -2,6 +2,7 @@ import os
 import logging
 import uuid
 import time
+import hashlib
 from typing import Dict, Any, List
 from dotenv import load_dotenv
 
@@ -1874,7 +1875,7 @@ async def handle_admin_binance_deposits_callback(update_or_query, context: Conte
             [InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin")]
         ]
         if query:
-            await query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(buttons))
+            await safe_edit_message_text(query, text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(buttons))
         else:
             await update_or_query.message.reply_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(buttons))
         return
@@ -1929,17 +1930,27 @@ async def handle_admin_binance_deposits_callback(update_or_query, context: Conte
         end_idx = start_idx + PER_PAGE
         page_unclaimed = unclaimed[start_idx:end_idx]
 
+        if "unclaimed_tx_map" not in context.bot_data:
+            context.bot_data["unclaimed_tx_map"] = {}
+
         text += f"🔔 *Unclaimed Deposits (Page {page}/{total_pages}):*\n\n"
         for u in page_unclaimed:
             tx_clean = u['cleanTx']
+            token = hashlib.md5(tx_clean.encode()).hexdigest()[:10]
+            context.bot_data["unclaimed_tx_map"][token] = {
+                "tx_hash": tx_clean,
+                "amount": u["amount"],
+                "coin": u["coin"],
+                "time": u["time"]
+            }
             tx_short = f"{tx_clean[:8]}...{tx_clean[-6:]}" if len(tx_clean) > 16 else tx_clean
             text += (
                 f"• 🟡 *+${u['amount']:.2f} {u['coin']}* | `{u['time']}`\n"
                 f"  🆔 `Tx: {tx_clean}`\n\n"
             )
             buttons.append([
-                InlineKeyboardButton(f"🔒 Lock #{tx_short}", callback_data=f"admin_locktx_{tx_clean}"),
-                InlineKeyboardButton(f"👤 Credit (+${u['amount']:.2f})", callback_data=f"admin_credittx_{tx_clean}_{u['amount']}"),
+                InlineKeyboardButton(f"🔒 Lock #{tx_short}", callback_data=f"admin_ltx_{token}"),
+                InlineKeyboardButton(f"👤 Credit (+${u['amount']:.2f})", callback_data=f"admin_ctx_{token}"),
             ])
 
         # Pagination controls
@@ -2199,6 +2210,49 @@ async def handle_admin_router(update: Update, context: ContextTypes.DEFAULT_TYPE
     elif data.startswith("admin_bpage_"):
         p = int(data.replace("admin_bpage_", ""))
         await handle_admin_binance_deposits_callback(query, context, page=p)
+    elif data.startswith("admin_ltx_"):
+        token = data.replace("admin_ltx_", "").strip()
+        tx_data = context.bot_data.get("unclaimed_tx_map", {}).get(token)
+        if tx_data:
+            tx_hash = tx_data["tx_hash"]
+            amt = tx_data["amount"]
+            res = await database.admin_lock_txhash(tx_hash, amount=amt, note="Locked via Admin Binance Reconciler")
+            try:
+                await query.answer(f"🔒 TxID '{tx_hash[:16]}...' locked in bot DB!", show_alert=True)
+            except Exception:
+                pass
+        else:
+            try:
+                await query.answer("⚠️ Session refreshed", show_alert=True)
+            except Exception:
+                pass
+        await handle_admin_binance_deposits_callback(query, context)
+    elif data.startswith("admin_ctx_"):
+        token = data.replace("admin_ctx_", "").strip()
+        tx_data = context.bot_data.get("unclaimed_tx_map", {}).get(token)
+        if not tx_data:
+            try:
+                await query.answer("⚠️ Session expired, refreshing...", show_alert=True)
+            except Exception:
+                pass
+            await handle_admin_binance_deposits_callback(query, context)
+            return
+
+        tx_hash = tx_data["tx_hash"]
+        amt = float(tx_data["amount"])
+        context.user_data["waiting_for_admin_credit_tx_user"] = {
+            "tx_hash": tx_hash,
+            "amount": amt
+        }
+        await safe_edit_message_text(
+            query,
+            f"👤 *Credit Binance Deposit to User*\n\n"
+            f"🆔 *TxID:* `{tx_hash}`\n"
+            f"💰 *Amount:* `${amt:.2f}` USD\n\n"
+            "Send the **User ID** or **@Username** in your next message to credit this balance and permanently bind this transaction to that user:",
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="admin_binance_deposits")]])
+        )
     elif data.startswith("admin_locktx_"):
         tx_hash = data.replace("admin_locktx_", "").strip()
         res = await database.admin_lock_txhash(tx_hash, note="Locked via Admin Binance Reconciler")
@@ -2223,7 +2277,8 @@ async def handle_admin_router(update: Update, context: ContextTypes.DEFAULT_TYPE
             "tx_hash": tx_hash,
             "amount": amt
         }
-        await query.edit_message_text(
+        await safe_edit_message_text(
+            query,
             f"👤 *Credit Binance Deposit to User*\n\n"
             f"🆔 *TxID:* `{tx_hash}`\n"
             f"💰 *Amount:* `${amt:.2f}` USD\n\n"
