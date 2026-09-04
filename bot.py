@@ -910,6 +910,11 @@ async def show_orders_history(query, context: ContextTypes.DEFAULT_TYPE, page: i
         await query.edit_message_text(clean_text, reply_markup=InlineKeyboardMarkup(buttons))
 
 async def handle_user_order_detail_callback(query, context: ContextTypes.DEFAULT_TYPE, order_pk: int):
+    try:
+        await query.answer()
+    except Exception:
+        pass
+
     user = query.from_user
     order = await database.get_order_by_id(order_pk)
     if not order:
@@ -928,10 +933,21 @@ async def handle_user_order_detail_callback(query, context: ContextTypes.DEFAULT
     tot = float(order.get("total", 0.0))
     st = str(order.get("status", "delivered")).upper()
     date_str = str(order.get("created_at", ""))[:19].replace("T", " ")
-    keys = str(order.get("delivered_keys", "")).strip() or "No keys recorded."
+    raw_keys = str(order.get("delivered_keys", "")).strip() or "No keys recorded."
 
-    # Prevent Telegram 4096 character overflow
-    keys_display = keys if len(keys) <= 3000 else keys[:3000] + "\n...[truncated for display]"
+    # Smart credential extraction (e.g., email:pass or activation link)
+    clean_creds = raw_keys
+    extra_info = ""
+    if " | " in raw_keys:
+        parts = raw_keys.split(" | ")
+        first_segment = parts[0].strip()
+        if (":" in first_segment or "@" in first_segment or "http" in first_segment) and len(first_segment) < 200:
+            clean_creds = first_segment
+            extra_info = " | ".join(parts[1:]).strip()
+
+    # Safety truncation to guarantee Telegram 4096 char limit is NEVER exceeded
+    if len(clean_creds) > 1500:
+        clean_creds = clean_creds[:1500] + "\n...[truncated]"
 
     text = (
         f"📜 *Order Details & Item Delivery*\n\n"
@@ -940,11 +956,17 @@ async def handle_user_order_detail_callback(query, context: ContextTypes.DEFAULT
         f"📊 *Quantity:* `{qty}` unit(s)\n"
         f"💰 *Total Paid:* `${tot:.2f}` USD\n"
         f"🟢 *Status:* `{st}`\n"
-        f"📅 *Delivered Date:* `{date_str} UTC`\n\n"
-        "🔑 *Your Delivered Item / Credentials:*\n"
-        f"```text\n{keys_display}\n```\n"
-        "💡 _Tap and hold on the box above to copy instantly!_"
+        f"📅 *Date:* `{date_str} UTC`\n\n"
+        "🔑 *Your Delivered Item / Login Credentials:*\n"
+        f"```text\n{clean_creds}\n```\n"
+        "💡 _Tap and hold on the box above to copy your credentials instantly!_"
     )
+
+    if extra_info:
+        extra_summary = extra_info[:400] + ("..." if len(extra_info) > 400 else "")
+        # Clean markdown characters in extra info to prevent parsing issues
+        clean_extra = extra_summary.replace("*", "").replace("`", "").replace("_", "")
+        text += f"\n\n📋 *Account Details:* `{clean_extra}`"
 
     buttons = [
         [InlineKeyboardButton("🔙 Back to Orders History", callback_data="nav_orders")],
@@ -959,10 +981,14 @@ async def handle_user_order_detail_callback(query, context: ContextTypes.DEFAULT
             f"Order Details (Order #{order_id})\n"
             f"Product: {p_name} (x{qty})\n"
             f"Paid: ${tot:.2f} USD\n"
+            f"Status: {st}\n"
             f"Date: {date_str}\n\n"
-            f"Credentials:\n{keys_display}\n"
+            f"Credentials:\n{clean_creds}\n"
         )
-        await query.edit_message_text(fallback_text, reply_markup=InlineKeyboardMarkup(buttons))
+        try:
+            await query.edit_message_text(fallback_text, reply_markup=InlineKeyboardMarkup(buttons))
+        except Exception:
+            await query.message.reply_text(fallback_text, reply_markup=InlineKeyboardMarkup(buttons))
 
 async def show_help(query, context: ContextTypes.DEFAULT_TYPE):
     text = (
