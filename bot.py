@@ -53,6 +53,29 @@ binance_client = BinanceAPIClient()
 ADMIN_ID = int(os.getenv("ADMIN_ID", "6575066703"))
 ACTIVE_ASSISTANTS = {8934679152}
 
+async def safe_edit_message_text(target, text, parse_mode=ParseMode.MARKDOWN, reply_markup=None):
+    """Safely edit message, suppressing 'Message is not modified' and falling back on formatting errors."""
+    try:
+        if hasattr(target, "edit_message_text"):
+            return await target.edit_message_text(text, parse_mode=parse_mode, reply_markup=reply_markup)
+        elif hasattr(target, "message") and hasattr(target.message, "edit_text"):
+            return await target.message.edit_text(text, parse_mode=parse_mode, reply_markup=reply_markup)
+    except Exception as e:
+        err_msg = str(e).lower()
+        if "message is not modified" in err_msg:
+            return None
+        try:
+            clean_text = text.replace("*", "").replace("`", "").replace("_", "")
+            if hasattr(target, "edit_message_text"):
+                return await target.edit_message_text(clean_text, reply_markup=reply_markup)
+            elif hasattr(target, "message") and hasattr(target.message, "edit_text"):
+                return await target.message.edit_text(clean_text, reply_markup=reply_markup)
+        except Exception as e2:
+            if "message is not modified" in str(e2).lower():
+                return None
+            logger.warning(f"safe_edit_message_text error: {e2}")
+    return None
+
 def is_super_admin(user_id: int) -> bool:
     try:
         return int(user_id) == int(ADMIN_ID)
@@ -244,7 +267,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message:
         await update.message.reply_text(welcome_text, parse_mode=ParseMode.MARKDOWN, reply_markup=main_menu_keyboard(user.id))
     elif update.callback_query:
-        await update.callback_query.edit_message_text(welcome_text, parse_mode=ParseMode.MARKDOWN, reply_markup=main_menu_keyboard(user.id))
+        await safe_edit_message_text(update.callback_query, welcome_text, parse_mode=ParseMode.MARKDOWN, reply_markup=main_menu_keyboard(user.id))
 
 async def show_withdraw_menu(query, context: ContextTypes.DEFAULT_TYPE):
     text = (
@@ -1127,7 +1150,7 @@ async def show_admin_panel(update_or_query, context: ContextTypes.DEFAULT_TYPE):
     markup = InlineKeyboardMarkup(buttons)
 
     if hasattr(update_or_query, "edit_message_text"):
-        await update_or_query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=markup)
+        await safe_edit_message_text(update_or_query, text, parse_mode=ParseMode.MARKDOWN, reply_markup=markup)
     else:
         await update_or_query.message.reply_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=markup)
 
@@ -1943,18 +1966,10 @@ async def handle_admin_binance_deposits_callback(update_or_query, context: Conte
         InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin")
     ])
 
-    try:
-        if query:
-            await query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(buttons))
-        else:
-            await update_or_query.message.reply_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(buttons))
-    except Exception as e:
-        logger.error(f"Error rendering binance deposits markdown: {e}")
-        clean_text = text.replace("*", "").replace("`", "").replace("_", "")
-        if query:
-            await query.edit_message_text(clean_text, reply_markup=InlineKeyboardMarkup(buttons))
-        else:
-            await update_or_query.message.reply_text(clean_text, reply_markup=InlineKeyboardMarkup(buttons))
+    if query:
+        await safe_edit_message_text(query, text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(buttons))
+    else:
+        await update_or_query.message.reply_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(buttons))
 
 async def handle_admin_sync_callback(query, context: ContextTypes.DEFAULT_TYPE):
     await query.answer("🔄 Syncing catalog with shop API...")
