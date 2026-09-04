@@ -1236,6 +1236,49 @@ async def get_deposit_by_txhash(tx_hash: str) -> dict:
             row = await cursor.fetchone()
             return dict(row) if row else None
 
+async def get_all_used_txhashes_map() -> dict:
+    """Fetch all used / locked TxIDs in a single lightning-fast bulk query."""
+    result = {}
+    if USE_POSTGRES:
+        try:
+            pool = await get_pg_pool()
+            async with pool.acquire() as conn:
+                rows = await conn.fetch("""
+                    SELECT LOWER(tx_hash) as tx, user_id, amount, status, merchant_trade_no, created_at 
+                    FROM deposits 
+                    WHERE tx_hash IS NOT NULL AND status IN ('PAID', 'LOCKED_BY_ADMIN')
+                """)
+                for r in rows:
+                    raw_tx = (r["tx"] or "").strip().lower()
+                    if raw_tx:
+                        d_dict = dict(r)
+                        result[raw_tx] = d_dict
+                        clean_tx = raw_tx.replace("off-chain transfer ", "").strip()
+                        if clean_tx:
+                            result[clean_tx] = d_dict
+                return result
+        except Exception as e:
+            logger.error(f"PG get_all_used_txhashes_map error: {e}")
+
+    import aiosqlite
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute("""
+            SELECT LOWER(tx_hash) as tx, user_id, amount, status, merchant_trade_no, created_at 
+            FROM deposits 
+            WHERE tx_hash IS NOT NULL AND status IN ('PAID', 'LOCKED_BY_ADMIN')
+        """) as cursor:
+            rows = await cursor.fetchall()
+            for r in rows:
+                raw_tx = (r["tx"] or "").strip().lower()
+                if raw_tx:
+                    d_dict = dict(r)
+                    result[raw_tx] = d_dict
+                    clean_tx = raw_tx.replace("off-chain transfer ", "").strip()
+                    if clean_tx:
+                        result[clean_tx] = d_dict
+            return result
+
 async def admin_lock_txhash(tx_hash: str, amount: float = 0.0, note: str = "Locked by Admin") -> dict:
     """Permanently lock a TxID in the bot database so no user can ever claim/replay it."""
     clean_tx = str(tx_hash).strip()

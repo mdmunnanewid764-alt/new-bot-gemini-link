@@ -1491,94 +1491,6 @@ async def handle_admin_binance_balance_callback(query, context: ContextTypes.DEF
     else:
         await query.message.reply_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(buttons))
 
-async def handle_admin_binance_deposits_callback(query, context: ContextTypes.DEFAULT_TYPE):
-    if hasattr(query, "answer"):
-        await query.answer("Fetching live Binance deposits...")
-    res = await binance_client.get_live_deposit_history(limit=10)
-
-    if not res.get("success"):
-        err_msg = res.get("error", "Unknown error")
-        text = (
-            "🟡 *Binance Live Crypto Deposits*\n\n"
-            f"❌ *Could not fetch deposits:*\n`{err_msg}`\n\n"
-            "Make sure your Binance API key and Secret key are configured and have permissions enabled."
-        )
-        buttons = [
-            [InlineKeyboardButton("🔄 Try Again", callback_data="admin_binance_deposits")],
-            [InlineKeyboardButton("🔐 Binance Keys Setup", callback_data="admin_binance_keys")],
-            [InlineKeyboardButton("🔙 Admin Panel", callback_data="nav_admin")]
-        ]
-        if hasattr(query, "edit_message_text"):
-            await query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(buttons))
-        else:
-            await query.message.reply_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(buttons))
-        return
-
-    deposits = res.get("deposits", [])
-    text = (
-        f"🟡 *Binance Live Deposits (Last {len(deposits)})*\n\n"
-        "⚡ _Live crypto deposits directly fetched from your Binance account:_\n\n"
-    )
-
-    status_labels = {
-        0: "⏳ Pending",
-        1: "🟢 Success",
-        6: "⏳ Credited / Confirming",
-        7: "🔴 Rejected"
-    }
-
-    buttons = []
-    for d in deposits:
-        coin = d.get("coin", "USDT")
-        amt = float(d.get("amount", 0.0))
-        net = d.get("network", "CRYPTO")
-        st_code = d.get("status", 1)
-        st_text = status_labels.get(st_code, f"⚪ Status {st_code}")
-        tx = d.get("txId", "")
-        tx_short = f"`{tx[:8]}...{tx[-6:]}`" if len(tx) > 16 else f"`{tx}`"
-        addr = d.get("address", "")
-        addr_short = f"`{addr[:8]}...{addr[-6:]}`" if len(addr) > 16 else f"`{addr}`"
-
-        time_ms = d.get("insertTime") or d.get("completeTime") or 0
-        if time_ms:
-            time_str = datetime.utcfromtimestamp(time_ms / 1000).strftime("%Y-%m-%d %H:%M:%S UTC")
-        else:
-            time_str = "N/A"
-
-        transfer_type = " (Internal)" if d.get("transferType") == 1 else ""
-
-        text += (
-            f"━━━━━━━━━━━━━━━━━━━\n"
-            f"💵 *+{amt:.4f} {coin}* ({net}){transfer_type} | {st_text}\n"
-            f"🔗 TxID: {tx_short}\n"
-            f"📍 Addr: {addr_short}\n"
-            f"🕒 Time: `{time_str}`\n"
-        )
-
-        if d.get("transferType") == 1 or "Off-chain" in tx:
-            buttons.append([InlineKeyboardButton(f"⚡ Binance Internal: +{amt:.2f} {coin}", url="https://www.binance.com/en/my/wallet/history/deposit-crypto")])
-        elif len(tx) > 20 and all(c in "0123456789abcdefABCDEFxX" for c in tx):
-            exp_url = get_explorer_url(net, tx)
-            buttons.append([InlineKeyboardButton(f"🔍 Explorer: +{amt:.2f} {coin} ({net})", url=exp_url)])
-
-    if not deposits:
-        text += "_No recent deposit history found on Binance._\n"
-    else:
-        text += "━━━━━━━━━━━━━━━━━━━\n"
-
-    buttons.append([
-        InlineKeyboardButton("🔄 Refresh Deposits", callback_data="admin_binance_deposits"),
-        InlineKeyboardButton("🟡 Live Balances", callback_data="admin_binance_balance"),
-    ])
-    buttons.append([
-        InlineKeyboardButton("🔙 Admin Panel", callback_data="nav_admin")
-    ])
-
-    if hasattr(query, "edit_message_text"):
-        await query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(buttons))
-    else:
-        await query.message.reply_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(buttons))
-
 async def handle_admin_binance_keys_callback(query, context: ContextTypes.DEFAULT_TYPE):
     b_key, b_sec = await binance_client.get_credentials()
     key_preview = f"{b_key[:8]}...{b_key[-4:]}" if b_key and len(b_key) > 12 else (b_key or "NOT SET")
@@ -1944,7 +1856,8 @@ async def handle_admin_binance_deposits_callback(update_or_query, context: Conte
             await update_or_query.message.reply_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(buttons))
         return
 
-    # Cross-check each Binance deposit against our database
+    # Cross-check each Binance deposit against our database using instant bulk map lookup
+    used_map = await database.get_all_used_txhashes_map()
     unclaimed = []
     claimed = []
 
@@ -1956,10 +1869,8 @@ async def handle_admin_binance_deposits_callback(update_or_query, context: Conte
         itime = d.get("insertTime", 0)
         dt_str = datetime.fromtimestamp(itime / 1000.0).strftime("%Y-%m-%d %H:%M") if itime else "N/A"
 
-        # Check in DB
         clean_tx = tx.replace("Off-chain transfer ", "").strip()
-        db_rec = await database.get_deposit_by_txhash(clean_tx) or await database.get_deposit_by_txhash(tx)
-        is_used = await database.is_txhash_used(clean_tx) or await database.is_txhash_used(tx)
+        matched = used_map.get(tx.lower()) or used_map.get(clean_tx.lower())
 
         item = {
             "txId": tx,
@@ -1968,11 +1879,11 @@ async def handle_admin_binance_deposits_callback(update_or_query, context: Conte
             "coin": coin,
             "status": status,
             "time": dt_str,
-            "db_rec": db_rec,
-            "is_used": is_used
+            "db_rec": matched,
+            "is_used": bool(matched)
         }
 
-        if db_rec or is_used:
+        if matched:
             claimed.append(item)
         else:
             unclaimed.append(item)
@@ -1987,8 +1898,16 @@ async def handle_admin_binance_deposits_callback(update_or_query, context: Conte
     buttons = []
 
     if unclaimed:
-        text += "🔔 *Unclaimed Deposits (Received in Binance, not claimed in bot):*\n\n"
-        for u in unclaimed[:6]:
+        PER_PAGE = 5
+        total_unclaimed = len(unclaimed)
+        total_pages = max(1, (total_unclaimed + PER_PAGE - 1) // PER_PAGE)
+        page = max(1, min(page, total_pages))
+        start_idx = (page - 1) * PER_PAGE
+        end_idx = start_idx + PER_PAGE
+        page_unclaimed = unclaimed[start_idx:end_idx]
+
+        text += f"🔔 *Unclaimed Deposits (Page {page}/{total_pages}):*\n\n"
+        for u in page_unclaimed:
             tx_clean = u['cleanTx']
             tx_short = f"{tx_clean[:8]}...{tx_clean[-6:]}" if len(tx_clean) > 16 else tx_clean
             text += (
@@ -1999,6 +1918,16 @@ async def handle_admin_binance_deposits_callback(update_or_query, context: Conte
                 InlineKeyboardButton(f"🔒 Lock #{tx_short}", callback_data=f"admin_locktx_{tx_clean}"),
                 InlineKeyboardButton(f"👤 Credit (+${u['amount']:.2f})", callback_data=f"admin_credittx_{tx_clean}_{u['amount']}"),
             ])
+
+        # Pagination controls
+        if total_pages > 1:
+            nav_row = []
+            if page > 1:
+                nav_row.append(InlineKeyboardButton("⬅️ Prev", callback_data=f"admin_bpage_{page-1}"))
+            nav_row.append(InlineKeyboardButton(f"📄 {page}/{total_pages}", callback_data="admin_binance_deposits"))
+            if page < total_pages:
+                nav_row.append(InlineKeyboardButton("Next ➡️", callback_data=f"admin_bpage_{page+1}"))
+            buttons.append(nav_row)
     else:
         text += "✅ *All recent Binance deposits are 100% verified & accounted for in bot DB!*\n\n"
 
@@ -2252,15 +2181,29 @@ async def handle_admin_router(update: Update, context: ContextTypes.DEFAULT_TYPE
         await handle_admin_balance_callback(query, context)
     elif data == "admin_binance_deposits":
         await handle_admin_binance_deposits_callback(query, context)
+    elif data.startswith("admin_bpage_"):
+        p = int(data.replace("admin_bpage_", ""))
+        await handle_admin_binance_deposits_callback(query, context, page=p)
     elif data.startswith("admin_locktx_"):
         tx_hash = data.replace("admin_locktx_", "").strip()
         res = await database.admin_lock_txhash(tx_hash, note="Locked via Admin Binance Reconciler")
-        await query.answer(f"🔒 TxID '{tx_hash}' has been permanently locked in bot DB! No user can ever claim it.", show_alert=True)
+        try:
+            await query.answer(f"🔒 TxID '{tx_hash}' has been permanently locked in bot DB!", show_alert=True)
+        except Exception:
+            pass
         await handle_admin_binance_deposits_callback(query, context)
     elif data.startswith("admin_credittx_"):
-        parts = data.split("_")
-        tx_hash = parts[2]
-        amt = float(parts[3])
+        raw = data.replace("admin_credittx_", "")
+        last_und = raw.rfind("_")
+        if last_und != -1:
+            tx_hash = raw[:last_und]
+            try:
+                amt = float(raw[last_und+1:])
+            except ValueError:
+                amt = 0.0
+        else:
+            tx_hash = raw
+            amt = 0.0
         context.user_data["waiting_for_admin_credit_tx_user"] = {
             "tx_hash": tx_hash,
             "amount": amt
