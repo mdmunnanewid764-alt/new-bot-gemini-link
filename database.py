@@ -1237,7 +1237,7 @@ async def get_deposit_by_txhash(tx_hash: str) -> dict:
             return dict(row) if row else None
 
 async def get_all_used_txhashes_map() -> dict:
-    """Fetch all used / locked TxIDs in a single lightning-fast bulk query."""
+    """Fetch all used / locked / processed TxIDs in a single lightning-fast bulk query."""
     result = {}
     if USE_POSTGRES:
         try:
@@ -1246,7 +1246,7 @@ async def get_all_used_txhashes_map() -> dict:
                 rows = await conn.fetch("""
                     SELECT LOWER(tx_hash) as tx, user_id, amount, status, merchant_trade_no, created_at 
                     FROM deposits 
-                    WHERE tx_hash IS NOT NULL AND status IN ('PAID', 'LOCKED_BY_ADMIN')
+                    WHERE tx_hash IS NOT NULL AND TRIM(tx_hash) != ''
                 """)
                 for r in rows:
                     raw_tx = (r["tx"] or "").strip().lower()
@@ -1266,7 +1266,7 @@ async def get_all_used_txhashes_map() -> dict:
         async with db.execute("""
             SELECT LOWER(tx_hash) as tx, user_id, amount, status, merchant_trade_no, created_at 
             FROM deposits 
-            WHERE tx_hash IS NOT NULL AND status IN ('PAID', 'LOCKED_BY_ADMIN')
+            WHERE tx_hash IS NOT NULL AND TRIM(tx_hash) != ''
         """) as cursor:
             rows = await cursor.fetchall()
             for r in rows:
