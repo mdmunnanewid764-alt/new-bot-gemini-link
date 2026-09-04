@@ -1850,7 +1850,7 @@ async def handle_admin_pin_products_callback(update_or_query, context: ContextTy
     else:
         await update_or_query.message.reply_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(buttons))
 
-async def handle_admin_binance_deposits_callback(update_or_query, context: ContextTypes.DEFAULT_TYPE, page: int = 1):
+async def handle_admin_binance_deposits_callback(update_or_query, context: ContextTypes.DEFAULT_TYPE, page: int = 1, view_mode: str = "unclaimed"):
     query = update_or_query if hasattr(update_or_query, "edit_message_text") else None
     if query:
         try:
@@ -1912,71 +1912,114 @@ async def handle_admin_binance_deposits_callback(update_or_query, context: Conte
         else:
             unclaimed.append(item)
 
-    text = (
-        "🟡 *Binance Live Deposits & Reconciliation*\n\n"
-        f"📊 *Total Live Deposits:* `{len(deposits)}`\n"
-        f"⚠️ *Unclaimed (আন-ভেরিফাইড):* `{len(unclaimed)}` transaction(s)\n"
-        f"🟢 *Claimed (ভেরিফাইড):* `{len(claimed)}` transaction(s)\n\n"
-    )
+    if "unclaimed_tx_map" not in context.bot_data:
+        context.bot_data["unclaimed_tx_map"] = {}
 
+    num_icons = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣"]
     buttons = []
 
-    if unclaimed:
+    if view_mode == "claimed":
         PER_PAGE = 5
-        total_unclaimed = len(unclaimed)
-        total_pages = max(1, (total_unclaimed + PER_PAGE - 1) // PER_PAGE)
+        total_items = len(claimed)
+        total_pages = max(1, (total_items + PER_PAGE - 1) // PER_PAGE)
         page = max(1, min(page, total_pages))
         start_idx = (page - 1) * PER_PAGE
         end_idx = start_idx + PER_PAGE
-        page_unclaimed = unclaimed[start_idx:end_idx]
+        page_items = claimed[start_idx:end_idx]
 
-        if "unclaimed_tx_map" not in context.bot_data:
-            context.bot_data["unclaimed_tx_map"] = {}
+        text = (
+            "🟢 *ভেরিফাইড ডিপোজিট হিস্টোরি (Claimed Deposits)*\n\n"
+            f"📊 *মোট ভেরিফাইড পেমেন্ট:* `{len(claimed)}` টি | *আনক্লেইমড বাকি:* `{len(unclaimed)}` টি\n"
+            f"📄 *পেজ:* `{page}/{total_pages}`\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            "✅ _ইউজাররা এই পেমেন্টগুলো বটের মাধ্যমে অলরেডি ভেরিফাই করে ব্যালেন্স পেয়ে গেছে:_\n\n"
+        )
 
-        text += f"⚠️ *আন-ভেরিফাইড ট্রানজেকশন (Page {page}/{total_pages}):*\n"
-        text += "_নিচের এই পেমেন্টগুলো বাইন্যান্সে ঢুকেছে কিন্তু কোনো ইউজার এখনও ক্লেইম/ভেরিফাই করেনি:_\n\n"
-        for u in page_unclaimed:
-            tx_clean = u['cleanTx']
-            token = hashlib.md5(tx_clean.encode()).hexdigest()[:10]
-            context.bot_data["unclaimed_tx_map"][token] = {
-                "tx_hash": tx_clean,
-                "amount": u["amount"],
-                "coin": u["coin"],
-                "time": u["time"]
-            }
-            tx_short = f"{tx_clean[:8]}...{tx_clean[-6:]}" if len(tx_clean) > 16 else tx_clean
-            text += (
-                f"• 🟡 *+${u['amount']:.2f} {u['coin']}* | `{u['time']}`\n"
-                f"  🆔 `Tx: {tx_clean}`\n"
-                f"  📌 *স্ট্যাটাস:* ⚠️ _আনক্লেইমড (ইউজার এখনো ভেরিফাই করেনি)_\n\n"
-            )
-            buttons.append([
-                InlineKeyboardButton(f"🔒 Lock #{tx_short}", callback_data=f"admin_ltx_{token}"),
-                InlineKeyboardButton(f"👤 Credit (+${u['amount']:.2f})", callback_data=f"admin_ctx_{token}"),
-            ])
+        if not page_items:
+            text += "_কোনো ভেরিফাইড ডিপোজিট পাওয়া যায়নি।_\n\n"
+        else:
+            for idx, c in enumerate(page_items):
+                ic = num_icons[idx] if idx < len(num_icons) else f"#{idx+1}"
+                tx_c = c['cleanTx']
+                tx_short = f"{tx_c[:8]}...{tx_c[-6:]}" if len(tx_c) > 16 else tx_c
+                u_id = c['db_rec'].get('user_id') if c['db_rec'] else 'Locked'
+                st = c['db_rec'].get('status') if c['db_rec'] else 'PAID'
+                text += (
+                    f"{ic} 🟢 *+${c['amount']:.2f} {c['coin']}* | 🕒 `{c['time']}`\n"
+                    f"   👤 ইউজার ID: `{u_id}` ({st})\n"
+                    f"   🆔 Tx: `{tx_short}`\n\n"
+                )
 
-        # Pagination controls
+        # Pagination
         if total_pages > 1:
             nav_row = []
             if page > 1:
-                nav_row.append(InlineKeyboardButton("⬅️ Prev", callback_data=f"admin_bpage_{page-1}"))
-            nav_row.append(InlineKeyboardButton(f"📄 {page}/{total_pages}", callback_data="admin_binance_deposits"))
+                nav_row.append(InlineKeyboardButton("⬅️ Prev", callback_data=f"admin_bpage_claimed_{page-1}"))
+            nav_row.append(InlineKeyboardButton(f"📄 {page}/{total_pages}", callback_data="noop"))
             if page < total_pages:
-                nav_row.append(InlineKeyboardButton("Next ➡️", callback_data=f"admin_bpage_{page+1}"))
+                nav_row.append(InlineKeyboardButton("Next ➡️", callback_data=f"admin_bpage_claimed_{page+1}"))
             buttons.append(nav_row)
-    else:
-        text += "✅ *সবগুলো বাইন্যান্স ডিপোজিট ১০০% ভেরিফাইড ও ইউজারদের ব্যালেন্সে যুক্ত আছে!*\n\n"
 
-    if claimed:
-        text += "━━━━━━━━━━━━━━━━━━━\n"
-        text += "🟢 *সাম্প্রতিক ভেরিফাইড ট্রানজেকশন (ইউজার অলরেডি ব্যালেন্স পেয়ে গেছে):*\n"
-        for c in claimed[:3]:
-            tx_c = c['cleanTx']
-            u_id = c['db_rec'].get('user_id') if c['db_rec'] else 'Locked'
-            text += f"• 🟢 `+${c['amount']:.2f}` | ইউজার: `{u_id}` | `Tx: {tx_c[:12]}...` (✅ ক্লেইমড)\n"
+        buttons.append([InlineKeyboardButton(f"⚠️ আনক্লেইমড লিস্ট দেখুন ({len(unclaimed)})", callback_data="admin_bmode_unclaimed")])
+
+    else:
+        # Default: Unclaimed Deposits Mode
+        PER_PAGE = 3
+        total_items = len(unclaimed)
+        total_pages = max(1, (total_items + PER_PAGE - 1) // PER_PAGE)
+        page = max(1, min(page, total_pages))
+        start_idx = (page - 1) * PER_PAGE
+        end_idx = start_idx + PER_PAGE
+        page_items = unclaimed[start_idx:end_idx]
+
+        text = (
+            "🟡 *Binance Unclaimed Deposits (ক্লেইম বাকি)*\n\n"
+            f"📊 *মোট লাইভ ডিপোজিট:* `{len(deposits)}` টি\n"
+            f"⚠️ *ক্লেইম বাকি (আন-ভেরিফাইড):* `{len(unclaimed)}` টি\n"
+            f"🟢 *অলরেডি ভেরিফাইড:* `{len(claimed)}` টি\n"
+            f"📄 *পেজ:* `{page}/{total_pages}`\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            "⚠️ _এই টাকাগুলো বাইন্যান্সে ঢুকেছে কিন্তু কোনো ইউজার এখনও ক্লেইম করেনি:_ \n\n"
+        )
+
+        if not page_items:
+            text += "🎉 *কোনো আনক্লেইমড ডিপোজিট বাকি নেই! সব পেমেন্ট ভেরিফাইড।* \n\n"
+        else:
+            for idx, u in enumerate(page_items):
+                ic = num_icons[idx] if idx < len(num_icons) else f"#{idx+1}"
+                tx_clean = u['cleanTx']
+                token = hashlib.md5(tx_clean.encode()).hexdigest()[:10]
+                context.bot_data["unclaimed_tx_map"][token] = {
+                    "tx_hash": tx_clean,
+                    "amount": u["amount"],
+                    "coin": u["coin"],
+                    "time": u["time"]
+                }
+                tx_short = f"{tx_clean[:8]}...{tx_clean[-6:]}" if len(tx_clean) > 16 else tx_clean
+                text += (
+                    f"{ic} 🟡 *+${u['amount']:.2f} {u['coin']}* | 🕒 `{u['time']}`\n"
+                    f"   🆔 TxID: `{tx_short}`\n"
+                    f"   📌 স্ট্যাটাস: ⚠️ _আনক্লেইমড_\n\n"
+                )
+                buttons.append([
+                    InlineKeyboardButton(f"🔒 Lock {ic}", callback_data=f"admin_ltx_{token}"),
+                    InlineKeyboardButton(f"👤 Credit {ic} (+${u['amount']:.2f})", callback_data=f"admin_ctx_{token}"),
+                ])
+
+        # Pagination
+        if total_pages > 1:
+            nav_row = []
+            if page > 1:
+                nav_row.append(InlineKeyboardButton("⬅️ Prev", callback_data=f"admin_bpage_unclaimed_{page-1}"))
+            nav_row.append(InlineKeyboardButton(f"📄 {page}/{total_pages}", callback_data="noop"))
+            if page < total_pages:
+                nav_row.append(InlineKeyboardButton("Next ➡️", callback_data=f"admin_bpage_unclaimed_{page+1}"))
+            buttons.append(nav_row)
+
+        buttons.append([InlineKeyboardButton(f"🟢 ভেরিফাইড হিস্টোরি দেখুন ({len(claimed)})", callback_data="admin_bmode_claimed")])
 
     buttons.append([
-        InlineKeyboardButton("🔄 Refresh", callback_data="admin_binance_deposits"),
+        InlineKeyboardButton("🔄 Refresh", callback_data=f"admin_bmode_{view_mode}"),
         InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin")
     ])
 
@@ -2208,11 +2251,19 @@ async def handle_admin_router(update: Update, context: ContextTypes.DEFAULT_TYPE
         await handle_admin_deposited_users_callback(query, context)
     elif data == "admin_balance":
         await handle_admin_balance_callback(query, context)
-    elif data == "admin_binance_deposits":
-        await handle_admin_binance_deposits_callback(query, context)
+    elif data == "admin_binance_deposits" or data == "admin_bmode_unclaimed":
+        await handle_admin_binance_deposits_callback(query, context, page=1, view_mode="unclaimed")
+    elif data == "admin_bmode_claimed":
+        await handle_admin_binance_deposits_callback(query, context, page=1, view_mode="claimed")
+    elif data.startswith("admin_bpage_unclaimed_"):
+        p = int(data.replace("admin_bpage_unclaimed_", ""))
+        await handle_admin_binance_deposits_callback(query, context, page=p, view_mode="unclaimed")
+    elif data.startswith("admin_bpage_claimed_"):
+        p = int(data.replace("admin_bpage_claimed_", ""))
+        await handle_admin_binance_deposits_callback(query, context, page=p, view_mode="claimed")
     elif data.startswith("admin_bpage_"):
         p = int(data.replace("admin_bpage_", ""))
-        await handle_admin_binance_deposits_callback(query, context, page=p)
+        await handle_admin_binance_deposits_callback(query, context, page=p, view_mode="unclaimed")
     elif data.startswith("admin_ltx_"):
         token = data.replace("admin_ltx_", "").strip()
         tx_data = context.bot_data.get("unclaimed_tx_map", {}).get(token)
