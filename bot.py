@@ -1957,11 +1957,13 @@ async def handle_admin_binance_deposits_callback(update_or_query, context: Conte
         dt_str = datetime.fromtimestamp(itime / 1000.0).strftime("%Y-%m-%d %H:%M") if itime else "N/A"
 
         # Check in DB
-        db_rec = await database.get_deposit_by_txhash(tx)
-        is_used = await database.is_txhash_used(tx)
+        clean_tx = tx.replace("Off-chain transfer ", "").strip()
+        db_rec = await database.get_deposit_by_txhash(clean_tx) or await database.get_deposit_by_txhash(tx)
+        is_used = await database.is_txhash_used(clean_tx) or await database.is_txhash_used(tx)
 
         item = {
             "txId": tx,
+            "cleanTx": clean_tx,
             "amount": amt,
             "coin": coin,
             "status": status,
@@ -1987,7 +1989,7 @@ async def handle_admin_binance_deposits_callback(update_or_query, context: Conte
     if unclaimed:
         text += "🔔 *Unclaimed Deposits (Received in Binance, not claimed in bot):*\n\n"
         for u in unclaimed[:6]:
-            tx_clean = u['txId'].replace("Off-chain transfer ", "")
+            tx_clean = u['cleanTx']
             tx_short = f"{tx_clean[:8]}...{tx_clean[-6:]}" if len(tx_clean) > 16 else tx_clean
             text += (
                 f"• 🟡 *+${u['amount']:.2f} {u['coin']}* | `{u['time']}`\n"
@@ -2003,7 +2005,7 @@ async def handle_admin_binance_deposits_callback(update_or_query, context: Conte
     if claimed:
         text += "🟢 *Recent Claimed Transactions:*\n"
         for c in claimed[:3]:
-            tx_c = c['txId'].replace("Off-chain transfer ", "")
+            tx_c = c['cleanTx']
             u_id = c['db_rec'].get('user_id') if c['db_rec'] else 'Locked'
             text += f"• 🟢 `+${c['amount']:.2f}` | User `{u_id}` | `Tx: {tx_c[:12]}...`\n"
 
@@ -2012,10 +2014,18 @@ async def handle_admin_binance_deposits_callback(update_or_query, context: Conte
         InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin")
     ])
 
-    if query:
-        await query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(buttons))
-    else:
-        await update_or_query.message.reply_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(buttons))
+    try:
+        if query:
+            await query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(buttons))
+        else:
+            await update_or_query.message.reply_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(buttons))
+    except Exception as e:
+        logger.error(f"Error rendering binance deposits markdown: {e}")
+        clean_text = text.replace("*", "").replace("`", "").replace("_", "")
+        if query:
+            await query.edit_message_text(clean_text, reply_markup=InlineKeyboardMarkup(buttons))
+        else:
+            await update_or_query.message.reply_text(clean_text, reply_markup=InlineKeyboardMarkup(buttons))
 
 async def handle_admin_sync_callback(query, context: ContextTypes.DEFAULT_TYPE):
     await query.answer("🔄 Syncing catalog with shop API...")

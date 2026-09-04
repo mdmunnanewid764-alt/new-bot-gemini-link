@@ -1209,14 +1209,18 @@ async def is_txhash_used(tx_hash: str, current_trade_no: str = None) -> bool:
 
 async def get_deposit_by_txhash(tx_hash: str) -> dict:
     """Find an existing deposit by transaction hash."""
-    clean_tx = str(tx_hash).strip().lower()
-    if not clean_tx:
+    clean_tx = str(tx_hash).replace("Off-chain transfer ", "").strip().lower()
+    if not clean_tx or len(clean_tx) < 4:
         return None
     if USE_POSTGRES:
         try:
             pool = await get_pg_pool()
             async with pool.acquire() as conn:
-                row = await conn.fetchrow("SELECT * FROM deposits WHERE LOWER(tx_hash) = $1 ORDER BY id DESC LIMIT 1", clean_tx)
+                row = await conn.fetchrow("""
+                    SELECT * FROM deposits 
+                    WHERE LOWER(tx_hash) = $1 OR LOWER(tx_hash) LIKE $2 
+                    ORDER BY created_at DESC LIMIT 1
+                """, clean_tx, f"%{clean_tx}%")
                 return dict(row) if row else None
         except Exception as e:
             logger.error(f"PG get_deposit_by_txhash error: {e}")
@@ -1224,7 +1228,11 @@ async def get_deposit_by_txhash(tx_hash: str) -> dict:
     import aiosqlite
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
-        async with db.execute("SELECT * FROM deposits WHERE LOWER(tx_hash) = LOWER(?) ORDER BY id DESC LIMIT 1", (clean_tx,)) as cursor:
+        async with db.execute("""
+            SELECT * FROM deposits 
+            WHERE LOWER(tx_hash) = LOWER(?) OR LOWER(tx_hash) LIKE ? 
+            ORDER BY created_at DESC LIMIT 1
+        """, (clean_tx, f"%{clean_tx}%")) as cursor:
             row = await cursor.fetchone()
             return dict(row) if row else None
 
