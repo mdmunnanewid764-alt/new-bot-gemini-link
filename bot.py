@@ -1850,7 +1850,7 @@ async def handle_admin_pin_products_callback(update_or_query, context: ContextTy
     else:
         await update_or_query.message.reply_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(buttons))
 
-async def handle_admin_binance_deposits_callback(update_or_query, context: ContextTypes.DEFAULT_TYPE, page: int = 1, view_mode: str = "unclaimed"):
+async def handle_admin_binance_deposits_callback(update_or_query, context: ContextTypes.DEFAULT_TYPE, page: int = 1, view_mode: str = "live"):
     query = update_or_query if hasattr(update_or_query, "edit_message_text") else None
     if query:
         try:
@@ -1918,7 +1918,67 @@ async def handle_admin_binance_deposits_callback(update_or_query, context: Conte
     num_icons = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣"]
     buttons = []
 
-    if view_mode == "claimed":
+    if view_mode == "live":
+        status_labels = {
+            0: "⏳ Pending",
+            1: "🟢 Success",
+            6: "⏳ Credited / Confirming",
+            7: "🔴 Rejected"
+        }
+
+        text = (
+            f"🟡 *Binance Live Deposits (Last {min(len(deposits), 10)})*\n\n"
+            "⚡ _Live crypto deposits directly fetched from your Binance account:_\n\n"
+        )
+
+        for d in deposits[:10]:
+            coin = d.get("coin", "USDT")
+            amt = float(d.get("amount", 0.0))
+            net = d.get("network", "CRYPTO")
+            st_code = d.get("status", 1)
+            st_text = status_labels.get(st_code, f"⚪ Status {st_code}")
+            tx = str(d.get("txId", "")).strip()
+            tx_short = f"`{tx[:8]}...{tx[-6:]}`" if len(tx) > 16 else f"`{tx}`"
+            addr = str(d.get("address", "")).strip()
+            addr_short = f"`{addr[:8]}...{addr[-6:]}`" if len(addr) > 16 else f"`{addr}`"
+
+            time_ms = d.get("insertTime") or d.get("completeTime") or 0
+            if time_ms:
+                time_str = datetime.utcfromtimestamp(time_ms / 1000).strftime("%Y-%m-%d %H:%M:%S UTC")
+            else:
+                time_str = "N/A"
+
+            transfer_type = " (Internal)" if d.get("transferType") == 1 else ""
+
+            text += (
+                f"━━━━━━━━━━━━━━━━━━━\n"
+                f"💵 *+{amt:.4f} {coin}* ({net}){transfer_type} | {st_text}\n"
+                f"🔗 TxID: {tx_short}\n"
+                f"📍 Addr: {addr_short}\n"
+                f"🕒 Time: `{time_str}`\n"
+            )
+
+            if d.get("transferType") == 1 or "Off-chain" in tx:
+                buttons.append([InlineKeyboardButton(f"⚡ Binance Internal: +{amt:.2f} {coin}", url="https://www.binance.com/en/my/wallet/history/deposit-crypto")])
+            elif len(tx) > 20 and all(c in "0123456789abcdefABCDEFxX" for c in tx):
+                exp_url = get_explorer_url(net, tx)
+                buttons.append([InlineKeyboardButton(f"🔍 Explorer: +{amt:.2f} {coin} ({net})", url=exp_url)])
+
+        text += "━━━━━━━━━━━━━━━━━━━\n"
+
+        # Dedicated Unclaimed / Unverified button
+        buttons.append([
+            InlineKeyboardButton(f"⚠️ আন-ভেরিফাইড পেমেন্ট ম্যানেজার ({len(unclaimed)} টি বাকি)", callback_data="admin_bmode_unclaimed")
+        ])
+        buttons.append([
+            InlineKeyboardButton("🔄 Refresh Deposits", callback_data="admin_binance_deposits"),
+            InlineKeyboardButton("🟡 Live Balances", callback_data="admin_binance_balance"),
+        ])
+        buttons.append([
+            InlineKeyboardButton("🔙 Admin Panel", callback_data="nav_admin")
+        ])
+
+    elif view_mode == "claimed":
         PER_PAGE = 5
         total_items = len(claimed)
         total_pages = max(1, (total_items + PER_PAGE - 1) // PER_PAGE)
@@ -1960,10 +2020,17 @@ async def handle_admin_binance_deposits_callback(update_or_query, context: Conte
                 nav_row.append(InlineKeyboardButton("Next ➡️", callback_data=f"admin_bpage_claimed_{page+1}"))
             buttons.append(nav_row)
 
-        buttons.append([InlineKeyboardButton(f"⚠️ আনক্লেইমড লিস্ট দেখুন ({len(unclaimed)})", callback_data="admin_bmode_unclaimed")])
+        buttons.append([
+            InlineKeyboardButton(f"⚠️ আন-ভেরিফাইড লিস্ট ({len(unclaimed)})", callback_data="admin_bmode_unclaimed"),
+            InlineKeyboardButton("🔙 লাইভ ফিড", callback_data="admin_bmode_live")
+        ])
+        buttons.append([
+            InlineKeyboardButton("🔄 Refresh", callback_data="admin_bmode_claimed"),
+            InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin")
+        ])
 
     else:
-        # Default: Unclaimed Deposits Mode
+        # view_mode == "unclaimed"
         PER_PAGE = 3
         total_items = len(unclaimed)
         total_pages = max(1, (total_items + PER_PAGE - 1) // PER_PAGE)
@@ -1973,13 +2040,13 @@ async def handle_admin_binance_deposits_callback(update_or_query, context: Conte
         page_items = unclaimed[start_idx:end_idx]
 
         text = (
-            "🟡 *Binance Unclaimed Deposits (ক্লেইম বাকি)*\n\n"
+            "🟡 *আন-ভেরিফাইড পেমেন্ট ম্যানেজার (Unclaimed Deposits)*\n\n"
             f"📊 *মোট লাইভ ডিপোজিট:* `{len(deposits)}` টি\n"
             f"⚠️ *ক্লেইম বাকি (আন-ভেরিফাইড):* `{len(unclaimed)}` টি\n"
             f"🟢 *অলরেডি ভেরিফাইড:* `{len(claimed)}` টি\n"
             f"📄 *পেজ:* `{page}/{total_pages}`\n"
             "━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-            "⚠️ _এই টাকাগুলো বাইন্যান্সে ঢুকেছে কিন্তু কোনো ইউজার এখনও ক্লেইম করেনি:_ \n\n"
+            "⚠️ _এই টাকাগুলো বাইন্যান্সে ঢুকেছে কিন্তু কোনো ইউজার এখনও ক্লেইম/ভেরিফাই করেনি:_ \n\n"
         )
 
         if not page_items:
@@ -2016,12 +2083,14 @@ async def handle_admin_binance_deposits_callback(update_or_query, context: Conte
                 nav_row.append(InlineKeyboardButton("Next ➡️", callback_data=f"admin_bpage_unclaimed_{page+1}"))
             buttons.append(nav_row)
 
-        buttons.append([InlineKeyboardButton(f"🟢 ভেরিফাইড হিস্টোরি দেখুন ({len(claimed)})", callback_data="admin_bmode_claimed")])
-
-    buttons.append([
-        InlineKeyboardButton("🔄 Refresh", callback_data=f"admin_bmode_{view_mode}"),
-        InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin")
-    ])
+        buttons.append([
+            InlineKeyboardButton(f"🟢 ভেরিফাইড হিস্টোরি ({len(claimed)})", callback_data="admin_bmode_claimed"),
+            InlineKeyboardButton("🔙 লাইভ ডিপোজিট ফিড", callback_data="admin_bmode_live")
+        ])
+        buttons.append([
+            InlineKeyboardButton("🔄 Refresh", callback_data="admin_bmode_unclaimed"),
+            InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin")
+        ])
 
     if query:
         await safe_edit_message_text(query, text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(buttons))
@@ -2251,7 +2320,9 @@ async def handle_admin_router(update: Update, context: ContextTypes.DEFAULT_TYPE
         await handle_admin_deposited_users_callback(query, context)
     elif data == "admin_balance":
         await handle_admin_balance_callback(query, context)
-    elif data == "admin_binance_deposits" or data == "admin_bmode_unclaimed":
+    elif data == "admin_binance_deposits" or data == "admin_bmode_live":
+        await handle_admin_binance_deposits_callback(query, context, page=1, view_mode="live")
+    elif data == "admin_bmode_unclaimed":
         await handle_admin_binance_deposits_callback(query, context, page=1, view_mode="unclaimed")
     elif data == "admin_bmode_claimed":
         await handle_admin_binance_deposits_callback(query, context, page=1, view_mode="claimed")
