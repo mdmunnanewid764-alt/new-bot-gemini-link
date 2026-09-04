@@ -299,8 +299,9 @@ async def handle_navigation(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except ValueError:
                 page = 1
         await show_orders_history(query, context, page=page)
-    elif data.startswith("user_order_detail_"):
-        order_pk = int(data.replace("user_order_detail_", ""))
+    elif data.startswith("nav_orderdetail_") or data.startswith("user_order_detail_"):
+        clean_prefix = "nav_orderdetail_" if data.startswith("nav_orderdetail_") else "user_order_detail_"
+        order_pk = int(data.replace(clean_prefix, ""))
         await handle_user_order_detail_callback(query, context, order_pk)
     elif data == "nav_help":
         await show_help(query, context)
@@ -885,7 +886,7 @@ async def show_orders_history(query, context: ContextTypes.DEFAULT_TYPE, page: i
         )
 
         btn_text = f"🔑 View Credentials (Order #{order_id})"
-        buttons.append([InlineKeyboardButton(btn_text, callback_data=f"user_order_detail_{pk_id}")])
+        buttons.append([InlineKeyboardButton(btn_text, callback_data=f"nav_orderdetail_{pk_id}")])
 
     # Navigation buttons
     if total_pages > 1:
@@ -5028,7 +5029,7 @@ def main():
     app.add_handler(CommandHandler(["assistants", "managers"], assistants_command))
 
     # Callbacks
-    app.add_handler(CallbackQueryHandler(handle_navigation, pattern=r"^nav_"))
+    app.add_handler(CallbackQueryHandler(handle_navigation, pattern=r"^(nav_|user_order_)"))
     app.add_handler(CallbackQueryHandler(handle_product_detail, pattern=r"^prod_\d+"))
     app.add_handler(CallbackQueryHandler(handle_quantity_selector, pattern=r"^qty_\d+_\d+"))
     app.add_handler(CallbackQueryHandler(handle_buy_checkout, pattern=r"^buy_\d+_\d+"))
