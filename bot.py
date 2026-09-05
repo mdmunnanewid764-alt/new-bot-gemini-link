@@ -3353,6 +3353,8 @@ async def handle_txhash_prompt(update: Update, context: ContextTypes.DEFAULT_TYP
     )
 
 async def handle_user_text_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update or not update.message or not update.message.text:
+        return
     user = update.effective_user
     text = update.message.text.strip()
 
@@ -5399,6 +5401,11 @@ def main():
 
     # Text message listener
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_user_text_input))
+
+    async def global_error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+        logger.error(f"Global handler caught exception: {context.error}")
+
+    app.add_error_handler(global_error_handler)
 
     # Initialize DB, Assistants cache & initial sync before polling
     import asyncio
