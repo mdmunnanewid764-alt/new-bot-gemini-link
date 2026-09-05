@@ -233,16 +233,15 @@ async def broadcast_group_deposit(bot, user_name: str, username: str, user_id: i
 def main_menu_keyboard(user_id: int) -> InlineKeyboardMarkup:
     buttons = [
         [
-            InlineKeyboardButton("🛒 Browse Products", callback_data="nav_products"),
-            InlineKeyboardButton("💰 Deposit Funds", callback_data="nav_deposit")
+            InlineKeyboardButton("🛒 Shop", callback_data="nav_products"),
         ],
         [
-            InlineKeyboardButton("👤 My Account", callback_data="nav_account"),
-            InlineKeyboardButton("📜 My Orders", callback_data="nav_orders")
+            InlineKeyboardButton("💼 Top Up", callback_data="nav_deposit"),
+            InlineKeyboardButton("📋 My Orders", callback_data="nav_orders")
         ],
         [
-            InlineKeyboardButton("💳 Withdraw", callback_data="nav_withdraw"),
-            InlineKeyboardButton("ℹ️ Help & Support", callback_data="nav_help")
+            InlineKeyboardButton("💬 Support", callback_data="nav_help"),
+            InlineKeyboardButton("👤 Profile", callback_data="nav_account")
         ]
     ]
     if is_super_admin(user_id):
