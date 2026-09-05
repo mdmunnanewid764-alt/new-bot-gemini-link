@@ -5,6 +5,13 @@ import uuid
 import time
 import hashlib
 from typing import Dict, Any, List, Optional, Union
+
+try:
+    import uvloop
+    uvloop.install()
+except Exception:
+    pass
+
 from dotenv import load_dotenv
 
 from telegram import (
@@ -5720,19 +5727,20 @@ def main():
 
     request_kwargs = {
         "connect_timeout": 5.0,
-        "read_timeout": 10.0,
-        "write_timeout": 10.0,
-        "pool_timeout": 5.0,
-        "connection_pool_size": 100
+        "read_timeout": 8.0,
+        "write_timeout": 8.0,
+        "pool_timeout": 3.0,
+        "connection_pool_size": 256,
+        "http_version": "1.1"
     }
     if proxy_url:
         logger.info(f"Using Proxy: {proxy_url}")
         request_kwargs["proxy_url"] = proxy_url
 
     request = HTTPXRequest(**request_kwargs)
-    get_updates_request = HTTPXRequest(connect_timeout=10.0, read_timeout=25.0, write_timeout=10.0, connection_pool_size=10)
+    get_updates_request = HTTPXRequest(connect_timeout=5.0, read_timeout=25.0, write_timeout=5.0, connection_pool_size=32)
 
-    builder = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).request(request).get_updates_request(get_updates_request).concurrent_updates(True)
+    builder = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).request(request).get_updates_request(get_updates_request).concurrent_updates(128)
     if tg_base_url:
         logger.info(f"Using custom Telegram Base URL: {tg_base_url}")
         builder.base_url(tg_base_url)
