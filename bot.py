@@ -5795,7 +5795,7 @@ def main():
     app.add_handler(TypeHandler(Update, instant_callback_ack), group=-1)
 
     # Callbacks
-    app.add_handler(CallbackQueryHandler(handle_navigation, pattern=r"^(nav_|user_order_)"))
+    app.add_handler(CallbackQueryHandler(handle_navigation, pattern=r"^(nav_|user_order_|set_lang_)"))
     app.add_handler(CallbackQueryHandler(handle_product_detail, pattern=r"^prod_\d+"))
     app.add_handler(CallbackQueryHandler(handle_quantity_selector, pattern=r"^qty_\d+_\d+"))
     app.add_handler(CallbackQueryHandler(handle_buy_checkout, pattern=r"^buy_\d+_\d+"))
