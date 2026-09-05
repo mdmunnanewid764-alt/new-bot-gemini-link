@@ -408,7 +408,10 @@ async def show_products_list(query, context: ContextTypes.DEFAULT_TYPE, page: in
 
 async def handle_product_detail(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
+    try:
+        asyncio.create_task(query.answer())
+    except Exception:
+        pass
     prod_id = int(query.data.split("_")[1])
 
     try:
@@ -447,7 +450,10 @@ async def handle_product_detail(update: Update, context: ContextTypes.DEFAULT_TY
 
 async def handle_quantity_selector(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
+    try:
+        asyncio.create_task(query.answer())
+    except Exception:
+        pass
     parts = query.data.split("_")
     prod_id = int(parts[1])
     qty = int(parts[2])
@@ -752,10 +758,6 @@ async def show_account_info(query, context: ContextTypes.DEFAULT_TYPE):
         [
             InlineKeyboardButton("💰 Deposit Funds", callback_data="nav_deposit"),
             InlineKeyboardButton("📜 Order History", callback_data="nav_orders")
-        ],
-        [
-            InlineKeyboardButton("🔑 Developer API Key", callback_data="nav_user_api_key"),
-            InlineKeyboardButton("📖 API Docs", callback_data="nav_api_docs")
         ],
         [InlineKeyboardButton("🔙 Back to Main Menu", callback_data="nav_main")]
     ]
@@ -1140,14 +1142,13 @@ async def show_admin_panel(update_or_query, context: ContextTypes.DEFAULT_TYPE):
         ],
         [
             InlineKeyboardButton("📢 Broadcast Message", callback_data="admin_broadcast"),
-            InlineKeyboardButton("🌐 Reseller API Keys", callback_data="admin_reseller_keys"),
-        ],
-        [
             InlineKeyboardButton("👨‍💼 Manage Assistants", callback_data="admin_manage_assistants"),
-            InlineKeyboardButton("🔄 Sync Products", callback_data="admin_sync"),
         ],
         [
+            InlineKeyboardButton("🔄 Sync Products", callback_data="admin_sync"),
             InlineKeyboardButton("💾 Download Backup", callback_data="admin_backup"),
+        ],
+        [
             InlineKeyboardButton("🏠 Main Menu", callback_data="nav_main"),
         ],
     ]
@@ -3250,7 +3251,10 @@ async def show_deposit_menu(query_or_update, context: ContextTypes.DEFAULT_TYPE)
 
 async def handle_deposit_preset(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
+    try:
+        asyncio.create_task(query.answer())
+    except Exception:
+        pass
     data = query.data
 
     if data == "dep_amt_custom":
@@ -3288,7 +3292,10 @@ async def show_network_selector(query_or_update, context: ContextTypes.DEFAULT_T
 async def handle_deposit_network(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Step 3: Show wallet address for chosen network."""
     query = update.callback_query
-    await query.answer()
+    try:
+        asyncio.create_task(query.answer())
+    except Exception:
+        pass
     user = query.from_user
     parts = query.data.split("_")
     network = parts[2]
@@ -3332,7 +3339,10 @@ async def handle_deposit_network(update: Update, context: ContextTypes.DEFAULT_T
 async def handle_txhash_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Step 4: Prompt user to paste TxHash."""
     query = update.callback_query
-    await query.answer()
+    try:
+        asyncio.create_task(query.answer())
+    except Exception:
+        pass
     parts = query.data.split("_", 3)
     network = parts[2]
     trade_no = parts[3]
@@ -5341,13 +5351,6 @@ def main():
         except Exception as e:
             logger.warning(f"Initial assistants cache warm-up error: {e}")
         asyncio.create_task(catalog_sync.start_periodic_catalog_sync(api_client, bot=application.bot, interval_seconds=120))
-        # Launch REST API Web Server & Docs Portal
-        if api_server:
-            try:
-                api_server.set_server_dependencies(api_client, bot=application.bot)
-                asyncio.create_task(api_server.start_api_server(host="0.0.0.0", port=8080))
-            except Exception as e:
-                logger.warning(f"Could not start API server: {e}")
 
     builder.post_init(on_startup)
     app = builder.build()
@@ -5355,8 +5358,6 @@ def main():
     # Commands
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("admin", admin_command))
-    app.add_handler(CommandHandler(["apikey", "api_key", "myapi", "mykey"], api_key_command))
-    app.add_handler(CommandHandler(["apidocs", "api_docs", "docs"], apidocs_command))
     app.add_handler(CommandHandler("setwallet", setwallet_command))
     app.add_handler(CommandHandler("wallet", wallet_command))
     app.add_handler(CommandHandler("setmargin", setmargin_command))

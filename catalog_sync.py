@@ -488,8 +488,16 @@ async def get_gemini_products() -> List[Dict[str, Any]]:
 
 async def get_local_product(product_id: int) -> Optional[Dict[str, Any]]:
     """Retrieve a single product from synced DB or Custom Admin Products with margin applied."""
-    if int(product_id) >= 90000:
-        c_id = int(product_id) - 90000
+    pid = int(product_id)
+    # Instant in-memory lookup
+    for k, prods in _CATALOG_CACHE.items():
+        if isinstance(prods, list):
+            for p in prods:
+                if int(p.get("id", 0)) == pid or int(p.get("product_id", 0)) == pid:
+                    return p
+
+    if pid >= 90000:
+        c_id = pid - 90000
         cp = await database.get_custom_product(c_id)
         if not cp:
             return None
