@@ -5,13 +5,6 @@ import uuid
 import time
 import hashlib
 from typing import Dict, Any, List, Optional, Union
-
-try:
-    import uvloop
-    uvloop.install()
-except Exception:
-    pass
-
 from dotenv import load_dotenv
 
 from telegram import (
