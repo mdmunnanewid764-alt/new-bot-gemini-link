@@ -660,25 +660,45 @@ async def get_order_by_id(order_pk: int) -> dict:
             row = await cursor.fetchone()
             return dict(row) if row else None
 
+_STATS_CACHE: dict = {}
+_STATS_CACHE_TS: float = 0.0
+
+def invalidate_stats_cache():
+    global _STATS_CACHE_TS
+    _STATS_CACHE_TS = 0.0
+
 async def get_stats() -> dict:
+    import time
+    global _STATS_CACHE, _STATS_CACHE_TS
+    now_ts = time.time()
+    if _STATS_CACHE and (now_ts - _STATS_CACHE_TS < 10.0):
+        return dict(_STATS_CACHE)
+
     if USE_POSTGRES:
         try:
             pool = await get_pg_pool()
             async with pool.acquire() as conn:
-                u_count = await conn.fetchval("SELECT COUNT(*) FROM users") or 0
-                row = await conn.fetchrow("SELECT COUNT(*), COALESCE(SUM(total), 0) FROM orders_local")
-                o_count, total_sales = row[0], float(row[1]) if row else 0.0
-                total_users_bal = await conn.fetchval("SELECT COALESCE(SUM(balance), 0.0) FROM user_balances") or 0.0
-                users_with_bal = await conn.fetchval("SELECT COUNT(*) FROM user_balances WHERE balance > 0") or 0
-                total_deposited = await conn.fetchval("SELECT COALESCE(SUM(amount), 0.0) FROM deposits WHERE status = 'PAID'") or 0.0
-                return {
-                    "total_users": u_count,
-                    "total_orders": o_count,
-                    "total_sales": total_sales,
-                    "total_users_balance": float(total_users_bal),
-                    "users_with_balance": users_with_bal,
-                    "total_deposited": float(total_deposited)
-                }
+                row = await conn.fetchrow("""
+                    SELECT 
+                        (SELECT COUNT(*) FROM users) as total_users,
+                        (SELECT COUNT(*) FROM orders_local) as total_orders,
+                        (SELECT COALESCE(SUM(total), 0) FROM orders_local) as total_sales,
+                        (SELECT COALESCE(SUM(balance), 0.0) FROM user_balances) as total_users_bal,
+                        (SELECT COUNT(*) FROM user_balances WHERE balance > 0) as users_with_bal,
+                        (SELECT COALESCE(SUM(amount), 0.0) FROM deposits WHERE status = 'PAID') as total_deposited
+                """)
+                if row:
+                    res = {
+                        "total_users": int(row["total_users"] or 0),
+                        "total_orders": int(row["total_orders"] or 0),
+                        "total_sales": float(row["total_sales"] or 0.0),
+                        "total_users_balance": float(row["total_users_bal"] or 0.0),
+                        "users_with_balance": int(row["users_with_bal"] or 0),
+                        "total_deposited": float(row["total_deposited"] or 0.0)
+                    }
+                    _STATS_CACHE = res
+                    _STATS_CACHE_TS = now_ts
+                    return res
         except Exception as e:
             logger.error(f"PG get_stats error: {e}")
 
@@ -695,7 +715,7 @@ async def get_stats() -> dict:
             users_with_bal = (await c4.fetchone())[0]
         async with db.execute("SELECT COALESCE(SUM(amount), 0.0) FROM deposits WHERE status = 'PAID'") as c5:
             total_deposited = (await c5.fetchone())[0]
-        return {
+        res = {
             "total_users": u_count,
             "total_orders": o_count,
             "total_sales": total_sales,
@@ -703,6 +723,9 @@ async def get_stats() -> dict:
             "users_with_balance": users_with_bal,
             "total_deposited": float(total_deposited or 0.0)
         }
+        _STATS_CACHE = res
+        _STATS_CACHE_TS = now_ts
+        return res
 
 async def get_total_users_balance() -> tuple[float, int]:
     """Returns (total_combined_balance, count_of_users_with_balance)."""
