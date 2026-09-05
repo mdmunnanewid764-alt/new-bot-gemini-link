@@ -1401,8 +1401,9 @@ async def handle_admin_custom_products_callback(update_or_query, context: Contex
     buttons = []
     for p in prods:
         c_id = p["id"]
-        name = p["name"]
-        price = float(p["price"])
+        raw_name = p.get("name", "Product")
+        clean_name = raw_name.replace("*", "").replace("_", "\\_").replace("`", "")
+        price = float(p.get("price", 0.0))
         stock = int(p.get("stock_count", 0))
         status_dot = "🟢" if p.get("is_active") == 1 else "🔴"
         creator_tag = ""
@@ -1412,9 +1413,11 @@ async def handle_admin_custom_products_callback(update_or_query, context: Contex
                 c_user = p.get("creator_username")
                 c_fn = p.get("creator_first_name")
                 if c_user:
-                    creator_str = f"@{c_user} (ID: `{c_by}`)"
+                    clean_u = c_user.replace("_", "\\_").replace("*", "")
+                    creator_str = f"@{clean_u} (ID: `{c_by}`)"
                 elif c_fn:
-                    creator_str = f"{c_fn} (ID: `{c_by}`)"
+                    clean_fn = c_fn.replace("_", "\\_").replace("*", "")
+                    creator_str = f"{clean_fn} (ID: `{c_by}`)"
                 else:
                     creator_str = f"ID: `{c_by}`"
             else:
@@ -1422,7 +1425,7 @@ async def handle_admin_custom_products_callback(update_or_query, context: Contex
             creator_tag = f"\n👤 *Added By:* {creator_str}"
 
         text += (
-            f"{status_dot} *ID `#{c_id}`:* {name}\n"
+            f"{status_dot} *ID `#{c_id}`:* {clean_name}\n"
             f"💵 Price: `${price:.2f}` USD | 📊 In Stock: `{stock}` items{creator_tag}\n"
             f"━━━━━━━━━━━━━━━━━━━\n"
         )
@@ -1446,10 +1449,7 @@ async def handle_admin_custom_products_callback(update_or_query, context: Contex
         nav_back
     ])
 
-    if hasattr(update_or_query, "edit_message_text"):
-        await update_or_query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(buttons))
-    else:
-        await update_or_query.message.reply_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(buttons))
+    await safe_edit_message_text(update_or_query, text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(buttons))
 
 async def handle_admin_manage_api_products_callback(update_or_query, context: ContextTypes.DEFAULT_TYPE):
     user_id = update_or_query.from_user.id if hasattr(update_or_query, "from_user") else update_or_query.effective_user.id
