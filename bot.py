@@ -1,9 +1,4 @@
 import os
-try:
-    import uvloop
-    uvloop.install()
-except Exception:
-    pass
 import logging
 import uuid
 import time
