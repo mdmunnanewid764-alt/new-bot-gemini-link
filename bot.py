@@ -19,6 +19,7 @@ from telegram.ext import (
     CallbackQueryHandler,
     ContextTypes,
     MessageHandler,
+    TypeHandler,
     filters
 )
 
@@ -254,7 +255,7 @@ def main_menu_keyboard(user_id: int) -> InlineKeyboardMarkup:
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
-    await database.register_user(user.id, user.username, user.first_name)
+    asyncio.create_task(database.register_user(user.id, user.username, user.first_name))
     balance = await database.get_user_balance(user.id)
 
     welcome_text = (
@@ -288,7 +289,7 @@ async def handle_navigation(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception:
         pass
     user = query.from_user
-    await database.register_user(user.id, user.username, user.first_name)
+    asyncio.create_task(database.register_user(user.id, user.username, user.first_name))
     
     data = query.data
 
@@ -5389,6 +5390,16 @@ def main():
     app.add_handler(CommandHandler(["addassistant", "addmanager"], addassistant_command))
     app.add_handler(CommandHandler(["removeassistant", "delassistant", "delmanager"], removeassistant_command))
     app.add_handler(CommandHandler(["assistants", "managers"], assistants_command))
+
+    # High-Priority Pre-Handler: Acknowledge callback immediately to dismiss Telegram UI spinner with zero delay
+    async def instant_callback_ack(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if update.callback_query:
+            try:
+                asyncio.create_task(update.callback_query.answer())
+            except Exception:
+                pass
+
+    app.add_handler(TypeHandler(Update, instant_callback_ack), group=-1)
 
     # Callbacks
     app.add_handler(CallbackQueryHandler(handle_navigation, pattern=r"^(nav_|user_order_)"))

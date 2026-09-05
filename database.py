@@ -557,6 +557,7 @@ async def toggle_product_pin(product_id: int) -> bool:
         return True
 
 async def record_order(user_id: int, order_id: Any, product_id: int, product_name: str, quantity: int, total: float, status: str, delivered_keys: list):
+    invalidate_user_orders_cache(user_id)
     now = datetime.utcnow().isoformat()
     keys_str = "\n".join(delivered_keys) if delivered_keys else ""
     order_id_str = str(order_id) if order_id is not None else ""
@@ -594,26 +595,52 @@ async def record_order(user_id: int, order_id: Any, product_id: int, product_nam
         """, (user_id, order_id_str, product_id, product_name, quantity, total, status, keys_str, now))
         await db.commit()
 
+_USER_ORDERS_CACHE: dict[tuple[int, int], tuple[list[dict], float]] = {}
+
+def invalidate_user_orders_cache(user_id: int = None):
+    global _USER_ORDERS_CACHE
+    if user_id is not None:
+        uid = int(user_id)
+        to_del = [k for k in _USER_ORDERS_CACHE if k[0] == uid]
+        for k in to_del:
+            _USER_ORDERS_CACHE.pop(k, None)
+    else:
+        _USER_ORDERS_CACHE.clear()
+
 async def get_user_orders(user_id: int, limit: int = 10) -> list[dict]:
+    import time
+    global _USER_ORDERS_CACHE
+    uid = int(user_id)
+    cache_key = (uid, limit)
+    now_ts = time.time()
+    if cache_key in _USER_ORDERS_CACHE:
+        val, ts = _USER_ORDERS_CACHE[cache_key]
+        if now_ts - ts < 30.0:
+            return val
+
+    res = []
     if USE_POSTGRES:
         try:
             pool = await get_pg_pool()
             async with pool.acquire() as conn:
                 rows = await conn.fetch("""
                     SELECT * FROM orders_local WHERE user_id = $1 ORDER BY id DESC LIMIT $2
-                """, int(user_id), limit)
-                return [dict(r) for r in rows]
+                """, uid, limit)
+                res = [dict(r) for r in rows]
         except Exception as e:
             logger.error(f"PG get_user_orders error: {e}")
+    else:
+        import aiosqlite
+        async with aiosqlite.connect(DB_PATH) as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute("""
+                SELECT * FROM orders_local WHERE user_id = ? ORDER BY id DESC LIMIT ?
+            """, (uid, limit)) as cursor:
+                rows = await cursor.fetchall()
+                res = [dict(r) for r in rows]
 
-    import aiosqlite
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
-        async with db.execute("""
-            SELECT * FROM orders_local WHERE user_id = ? ORDER BY id DESC LIMIT ?
-        """, (user_id, limit)) as cursor:
-            rows = await cursor.fetchall()
-            return [dict(r) for r in rows]
+    _USER_ORDERS_CACHE[cache_key] = (res, now_ts)
+    return res
 
 async def get_order_by_id(order_pk: int) -> dict:
     """Retrieve a single order by its primary key ID."""
