@@ -761,23 +761,46 @@ async def delete_product_margin(product_key: str):
         await db.execute("DELETE FROM product_margins WHERE product_key = ?", (k_str,))
         await db.commit()
 
+_USER_BALANCE_CACHE: dict[int, tuple[float, float]] = {}
+
+def invalidate_user_balance_cache(user_id: int = None):
+    global _USER_BALANCE_CACHE
+    if user_id is not None:
+        _USER_BALANCE_CACHE.pop(int(user_id), None)
+    else:
+        _USER_BALANCE_CACHE.clear()
+
 async def get_user_balance(user_id: int) -> float:
+    import time
+    global _USER_BALANCE_CACHE
+    uid = int(user_id)
+    now_ts = time.time()
+    if uid in _USER_BALANCE_CACHE:
+        val, ts = _USER_BALANCE_CACHE[uid]
+        if now_ts - ts < 15.0:
+            return val
+
+    bal_val = 0.0
     if USE_POSTGRES:
         try:
             pool = await get_pg_pool()
             async with pool.acquire() as conn:
-                bal = await conn.fetchval("SELECT balance FROM user_balances WHERE user_id = $1", int(user_id))
-                return float(bal) if bal is not None else 0.0
+                bal = await conn.fetchval("SELECT balance FROM user_balances WHERE user_id = $1", uid)
+                bal_val = float(bal) if bal is not None else 0.0
         except Exception as e:
             logger.error(f"PG get_user_balance error: {e}")
+    else:
+        import aiosqlite
+        async with aiosqlite.connect(DB_PATH) as db:
+            async with db.execute("SELECT balance FROM user_balances WHERE user_id = ?", (uid,)) as cursor:
+                row = await cursor.fetchone()
+                bal_val = float(row[0]) if row else 0.0
 
-    import aiosqlite
-    async with aiosqlite.connect(DB_PATH) as db:
-        async with db.execute("SELECT balance FROM user_balances WHERE user_id = ?", (user_id,)) as cursor:
-            row = await cursor.fetchone()
-            return float(row[0]) if row else 0.0
+    _USER_BALANCE_CACHE[uid] = (bal_val, now_ts)
+    return bal_val
 
 async def add_user_balance(user_id: int, amount: float, reason: str = "DEPOSIT_OR_MANUAL", ref_id: str = "") -> float:
+    invalidate_user_balance_cache(user_id)
     now = datetime.utcnow().isoformat()
     amount_f = float(amount)
     if USE_POSTGRES:
@@ -814,6 +837,7 @@ async def add_user_balance(user_id: int, amount: float, reason: str = "DEPOSIT_O
 
 async def deduct_user_balance(user_id: int, amount: float, reason: str = "PURCHASE", ref_id: str = "") -> bool:
     """Atomically deduct balance ensuring user balance never goes below zero."""
+    invalidate_user_balance_cache(user_id)
     amount_f = float(amount)
     now = datetime.utcnow().isoformat()
     if USE_POSTGRES:
@@ -853,6 +877,7 @@ async def deduct_user_balance(user_id: int, amount: float, reason: str = "PURCHA
     return False
 
 async def force_deduct_user_balance(user_id: int, amount: float) -> float:
+    invalidate_user_balance_cache(user_id)
     curr = await get_user_balance(user_id)
     new_bal = max(0.0, curr - float(amount))
     if USE_POSTGRES:
@@ -879,6 +904,7 @@ async def force_deduct_user_balance(user_id: int, amount: float) -> float:
     return new_bal
 
 async def set_user_balance(user_id: int, amount: float) -> float:
+    invalidate_user_balance_cache(user_id)
     new_bal = max(0.0, float(amount))
     if USE_POSTGRES:
         try:
