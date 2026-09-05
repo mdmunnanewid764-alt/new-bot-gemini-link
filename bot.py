@@ -34,6 +34,7 @@ except Exception as e:
 from shop_api import ShopAPIClient, ShopAPIError
 from payment_api import PaymentAPIClient, PaymentAPIError
 from binance_api import BinanceAPIClient
+from translations import t, LANGUAGES
 
 # Load environment variables
 load_dotenv()
@@ -232,34 +233,77 @@ async def broadcast_group_deposit(bot, user_name: str, username: str, user_id: i
 
 # --- KEYBOARDS & UI HELPERS ---
 
-def main_menu_keyboard(user_id: int) -> InlineKeyboardMarkup:
+def main_menu_keyboard(user_id: int, lang: str = "en") -> InlineKeyboardMarkup:
     buttons = [
         [
-            InlineKeyboardButton("🛒 Shop", callback_data="nav_products"),
+            InlineKeyboardButton(t("btn_shop", lang), callback_data="nav_products"),
         ],
         [
-            InlineKeyboardButton("💼 Top Up", callback_data="nav_deposit"),
-            InlineKeyboardButton("📋 My Orders", callback_data="nav_orders")
+            InlineKeyboardButton(t("btn_topup", lang), callback_data="nav_deposit"),
+            InlineKeyboardButton(t("btn_orders", lang), callback_data="nav_orders")
         ],
         [
-            InlineKeyboardButton("💬 Support", callback_data="nav_help"),
-            InlineKeyboardButton("👤 Profile", callback_data="nav_account")
+            InlineKeyboardButton(t("btn_support", lang), callback_data="nav_help"),
+            InlineKeyboardButton(t("btn_profile", lang), callback_data="nav_account")
+        ],
+        [
+            InlineKeyboardButton(t("btn_language", lang), callback_data="nav_language")
         ]
     ]
     if is_super_admin(user_id):
-        buttons.append([InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin")])
+        buttons.append([InlineKeyboardButton(t("btn_admin", lang), callback_data="nav_admin")])
     elif is_assistant(user_id):
-        buttons.append([InlineKeyboardButton("📦 Assistant Stock Panel", callback_data="admin_custom_prods")])
+        buttons.append([InlineKeyboardButton(t("btn_assistant", lang), callback_data="admin_custom_prods")])
     return InlineKeyboardMarkup(buttons)
+
+async def show_language_menu(query_or_update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = query_or_update.from_user.id if hasattr(query_or_update, "from_user") else query_or_update.effective_user.id
+    current_lang = await database.get_user_language(user_id)
+
+    title = t("lang_select_title", current_lang)
+
+    buttons = [
+        [
+            InlineKeyboardButton(f"{'✅ ' if current_lang == 'en' else ''}🇬🇧 English (Default)", callback_data="set_lang_en"),
+            InlineKeyboardButton(f"{'✅ ' if current_lang == 'fa' else ''}🇮🇷 فارسی (Iran)", callback_data="set_lang_fa"),
+        ],
+        [
+            InlineKeyboardButton(f"{'✅ ' if current_lang == 'ar' else ''}🇵🇸 العربية (Palestine)", callback_data="set_lang_ar"),
+            InlineKeyboardButton(f"{'✅ ' if current_lang == 'ur' else ''}🇵🇰 اردو (Pakistan)", callback_data="set_lang_ur"),
+        ],
+        [
+            InlineKeyboardButton(f"{'✅ ' if current_lang == 'bn' else ''}🇧🇩 বাংলা (Bangladesh)", callback_data="set_lang_bn"),
+        ],
+        [
+            InlineKeyboardButton(t("btn_back_main", current_lang), callback_data="nav_main")
+        ]
+    ]
+
+    markup = InlineKeyboardMarkup(buttons)
+    if hasattr(query_or_update, "edit_message_text"):
+        await query_or_update.edit_message_text(title, parse_mode=ParseMode.MARKDOWN, reply_markup=markup)
+    elif hasattr(query_or_update, "message") and query_or_update.message:
+        await query_or_update.message.reply_text(title, parse_mode=ParseMode.MARKDOWN, reply_markup=markup)
+
+async def handle_set_language(query, context: ContextTypes.DEFAULT_TYPE, new_lang: str):
+    user = query.from_user
+    await database.set_user_language(user.id, new_lang)
+    try:
+        await query.answer(t("lang_changed", new_lang), show_alert=False)
+    except Exception:
+        pass
+    await start_command(query, context)
 
 # --- HANDLERS ---
 
 async def show_product_detail_direct(update_or_query, context: ContextTypes.DEFAULT_TYPE, prod_id: int):
+    user_id = update_or_query.from_user.id if hasattr(update_or_query, "from_user") else update_or_query.effective_user.id
+    lang = await database.get_user_language(user_id)
     try:
         p = await catalog_sync.get_local_product(prod_id)
         if not p:
             msg = "⚠️ Product not found or out of stock."
-            kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to Catalog", callback_data="nav_products")]])
+            kb = InlineKeyboardMarkup([[InlineKeyboardButton(t("btn_back_catalog", lang), callback_data="nav_products")]])
             if hasattr(update_or_query, "edit_message_text"):
                 await update_or_query.edit_message_text(msg, reply_markup=kb)
             elif hasattr(update_or_query, "message") and update_or_query.message:
@@ -281,10 +325,10 @@ async def show_product_detail_direct(update_or_query, context: ContextTypes.DEFA
         )
 
         buttons = [
-            [InlineKeyboardButton("🛒 Buy Now", callback_data=f"qty_{prod_id}_1")],
+            [InlineKeyboardButton(t("btn_buy_now", lang), callback_data=f"qty_{prod_id}_1")],
             [
-                InlineKeyboardButton("🔙 Back to Catalog", callback_data="nav_products"),
-                InlineKeyboardButton("🏠 Main Menu", callback_data="nav_main")
+                InlineKeyboardButton(t("btn_back_catalog", lang), callback_data="nav_products"),
+                InlineKeyboardButton(t("btn_back_main", lang), callback_data="nav_main")
             ]
         ]
         if hasattr(update_or_query, "edit_message_text"):
@@ -294,40 +338,38 @@ async def show_product_detail_direct(update_or_query, context: ContextTypes.DEFA
     except Exception as e:
         logger.error(f"Error direct product detail: {e}")
 
-async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
+async def start_command(update_or_query, context: ContextTypes.DEFAULT_TYPE):
+    user = update_or_query.from_user if hasattr(update_or_query, "from_user") else update_or_query.effective_user
     asyncio.create_task(database.register_user(user.id, user.username, user.first_name))
 
     # Deep-link routing from broadcast buttons or external links
-    if context.args:
+    if hasattr(context, "args") and context.args:
         arg = context.args[0].strip()
         if arg.lower() in ("shop", "products", "group_order"):
-            await show_products_list(update, context, page=1)
+            await show_products_list(update_or_query, context, page=1)
             return
         elif arg.lower().startswith("prod_"):
             try:
                 p_id = int(arg.lower().replace("prod_", ""))
-                await show_product_detail_direct(update, context, p_id)
+                await show_product_detail_direct(update_or_query, context, p_id)
                 return
             except Exception:
                 pass
         elif arg.lower() in ("deposit", "group_deposit", "topup"):
-            await show_deposit_menu(update, context)
+            await show_deposit_menu(update_or_query, context)
             return
 
+    lang = await database.get_user_language(user.id)
     balance = await database.get_user_balance(user.id)
 
-    welcome_text = (
-        f"👋 *Hello {user.first_name or 'there'}! Welcome to Digital Shop Bot.*\n\n"
-        f"💳 *Your Balance:* `${balance:.2f}` USD\n\n"
-        "🛍️ Browse top-grade digital products with *instant automated delivery*.\n\n"
-        "Select an option from the menu below to get started:"
-    )
+    welcome_text = t("welcome", lang, name=(user.first_name or "there"), balance=balance)
 
-    if update.message:
-        await update.message.reply_text(welcome_text, parse_mode=ParseMode.MARKDOWN, reply_markup=main_menu_keyboard(user.id))
-    elif update.callback_query:
-        await safe_edit_message_text(update.callback_query, welcome_text, parse_mode=ParseMode.MARKDOWN, reply_markup=main_menu_keyboard(user.id))
+    if hasattr(update_or_query, "edit_message_text"):
+        await safe_edit_message_text(update_or_query, welcome_text, parse_mode=ParseMode.MARKDOWN, reply_markup=main_menu_keyboard(user.id, lang))
+    elif hasattr(update_or_query, "callback_query") and update_or_query.callback_query:
+        await safe_edit_message_text(update_or_query.callback_query, welcome_text, parse_mode=ParseMode.MARKDOWN, reply_markup=main_menu_keyboard(user.id, lang))
+    elif hasattr(update_or_query, "message") and update_or_query.message:
+        await update_or_query.message.reply_text(welcome_text, parse_mode=ParseMode.MARKDOWN, reply_markup=main_menu_keyboard(user.id, lang))
 
 async def show_withdraw_menu(query, context: ContextTypes.DEFAULT_TYPE):
     text = (
@@ -391,13 +433,19 @@ async def handle_navigation(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await handle_user_order_detail_callback(query, context, order_pk)
     elif data == "nav_help":
         await show_help(query, context)
+    elif data == "nav_language":
+        await show_language_menu(query, context)
+    elif data.startswith("set_lang_"):
+        new_lang = data.replace("set_lang_", "")
+        await handle_set_language(query, context, new_lang)
     elif data == "nav_admin":
         if is_super_admin(user.id):
             await show_admin_panel(query, context)
         elif is_assistant(user.id):
             await handle_admin_custom_products_callback(query, context)
         else:
-            await query.edit_message_text("❌ Unauthorized access.", reply_markup=main_menu_keyboard(user.id))
+            lang = await database.get_user_language(user.id)
+            await query.edit_message_text("❌ Unauthorized access.", reply_markup=main_menu_keyboard(user.id, lang))
 
 async def show_products_list(query, context: ContextTypes.DEFAULT_TYPE, page: int = 1):
     try:
@@ -429,11 +477,10 @@ async def show_products_list(query, context: ContextTypes.DEFAULT_TYPE, page: in
     end_idx = start_idx + ITEMS_PER_PAGE
     page_products = products[start_idx:end_idx]
 
-    text = (
-        f"🛒 *Available Products (Page {current_page}/{total_pages})*\n\n"
-        f"📊 *Total In-Stock Items:* `{total_products}` products\n"
-        "Select a product below to view details and purchase:"
-    )
+    user_id = query.from_user.id if hasattr(query, "from_user") else query.effective_user.id
+    lang = await database.get_user_language(user_id)
+
+    text = t("catalog_title", lang, current_page=current_page, total_pages=total_pages, total_products=total_products)
 
     buttons = []
     for p in page_products:
@@ -459,11 +506,14 @@ async def show_products_list(query, context: ContextTypes.DEFAULT_TYPE, page: in
         buttons.append(nav_row)
 
     buttons.append([
-        InlineKeyboardButton("🔄 Refresh", callback_data=f"nav_products_page_{current_page}"),
-        InlineKeyboardButton("🔙 Main Menu", callback_data="nav_main")
+        InlineKeyboardButton(t("btn_refresh", lang), callback_data=f"nav_products_page_{current_page}"),
+        InlineKeyboardButton(t("btn_back_main", lang), callback_data="nav_main")
     ])
     
-    await query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(buttons))
+    if hasattr(query, "edit_message_text"):
+        await query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(buttons))
+    elif hasattr(query, "message") and query.message:
+        await query.message.reply_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(buttons))
 
 async def handle_product_detail(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -799,26 +849,23 @@ async def handle_buy_checkout(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 async def show_account_info(query, context: ContextTypes.DEFAULT_TYPE):
     user = query.from_user
+    lang = await database.get_user_language(user.id)
     orders = await database.get_user_orders(user.id, limit=100)
     total_orders = len(orders)
     total_spent = sum(float(o.get('total', 0.0)) for o in orders)
     balance = await database.get_user_balance(user.id)
 
-    text = (
-        f"👤 *My Account Profile*\n\n"
-        f"🆔 *Telegram ID:* `{user.id}`\n"
-        f"👤 *Name:* {user.first_name or 'User'}\n"
-        f"💳 *Available Balance:* `${balance:.2f}` USD\n"
-        f"🛍️ *Total Orders Placed:* `{total_orders}`\n"
-        f"💵 *Total Spent:* `${total_spent:.2f}` USD"
-    )
+    text = t("profile", lang, user_id=user.id, name=user.first_name or 'User', balance=balance, total_orders=total_orders, total_spent=total_spent)
 
     buttons = [
         [
-            InlineKeyboardButton("💰 Deposit Funds", callback_data="nav_deposit"),
-            InlineKeyboardButton("📜 Order History", callback_data="nav_orders")
+            InlineKeyboardButton(t("btn_deposit_funds", lang), callback_data="nav_deposit"),
+            InlineKeyboardButton(t("btn_order_history", lang), callback_data="nav_orders")
         ],
-        [InlineKeyboardButton("🔙 Back to Main Menu", callback_data="nav_main")]
+        [
+            InlineKeyboardButton(t("btn_language", lang), callback_data="nav_language"),
+            InlineKeyboardButton(t("btn_back_main", lang), callback_data="nav_main")
+        ]
     ]
     await query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(buttons))
 
@@ -1080,19 +1127,13 @@ async def handle_user_order_detail_callback(query, context: ContextTypes.DEFAULT
             await query.message.reply_text(fallback_text, reply_markup=InlineKeyboardMarkup(buttons))
 
 async def show_help(query, context: ContextTypes.DEFAULT_TYPE):
-    text = (
-        "ℹ️ *Help & Support*\n\n"
-        "• *How to buy?*\n"
-        "  1. Tap 🛒 *Browse Products*\n"
-        "  2. Select your product and quantity\n"
-        "  3. Click *Confirm & Pay*\n"
-        "  4. Your credentials/keys are delivered instantly!\n\n"
-        "• *Order Issues?*\n"
-        "  Check your 📜 *My Orders* section to copy your keys anytime.\n\n"
-        "• *Need Assistance?*\n"
-        f"  Contact Administrator: [Admin Support](tg://user?id={ADMIN_ID})"
-    )
-    buttons = [[InlineKeyboardButton("🔙 Main Menu", callback_data="nav_main")]]
+    user_id = query.from_user.id if hasattr(query, "from_user") else query.effective_user.id
+    lang = await database.get_user_language(user_id)
+    text = t("support", lang)
+    buttons = [
+        [InlineKeyboardButton("💬 Admin Support", url=f"tg://user?id={ADMIN_ID}")],
+        [InlineKeyboardButton(t("btn_back_main", lang), callback_data="nav_main")]
+    ]
     await query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(buttons))
 
 # --- ADMIN COMMANDS & PANELS ---
@@ -3312,13 +3353,10 @@ async def get_wallet(network: str) -> str:
 
 async def show_deposit_menu(query_or_update, context: ContextTypes.DEFAULT_TYPE):
     user = query_or_update.from_user if hasattr(query_or_update, "from_user") else query_or_update.effective_user
+    lang = await database.get_user_language(user.id)
     balance = await database.get_user_balance(user.id)
 
-    text = (
-        "💳 *Deposit Funds*\n\n"
-        f"💰 *Your Bot Balance:* `${balance:.2f}` USD\n\n"
-        "Select the amount you want to deposit (USDT):"
-    )
+    text = t("deposit_menu", lang, balance=balance)
 
     buttons = [
         [
@@ -3331,7 +3369,7 @@ async def show_deposit_menu(query_or_update, context: ContextTypes.DEFAULT_TYPE)
             InlineKeyboardButton("$100", callback_data="dep_amt_100"),
             InlineKeyboardButton("✏️ Custom Amount", callback_data="dep_amt_custom"),
         ],
-        [InlineKeyboardButton("🔙 Main Menu", callback_data="nav_main")],
+        [InlineKeyboardButton(t("btn_back_main", lang), callback_data="nav_main")],
     ]
 
     if hasattr(query_or_update, "edit_message_text"):
@@ -5197,7 +5235,6 @@ async def create_and_preview_pricedrop(update_or_query, context: ContextTypes.DE
 
     broadcast_msg = (
         "🔥 *SPECIAL PRICE DROP ALERT!* 🔥\n\n"
-        f"🎉 *দাম কমানো হয়েছে! (Price Reduced)*\n"
         f"The price for *{prod_name}* has been dropped!\n\n"
         f"📦 *Product:* `{prod_name}`\n"
         f"💰 *Previous Price:* ~~~${old_price:.2f} USD~~~\n"
@@ -5205,7 +5242,7 @@ async def create_and_preview_pricedrop(update_or_query, context: ContextTypes.DE
         f"⚡ *You Save:* `${savings:.2f} USD` ({discount_pct:.0f}% OFF!)\n"
         f"{note_line}"
         "🛍️ *Instant automated delivery directly in bot!*\n"
-        "👇 *কেনার জন্য নিচের বাটনে ক্লিক করুন:*"
+        "👇 *Tap the button below to buy immediately:*"
     )
 
     context.user_data["pricedrop_draft"] = {

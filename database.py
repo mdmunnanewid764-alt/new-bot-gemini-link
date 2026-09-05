@@ -2288,4 +2288,62 @@ async def get_all_user_api_keys() -> list[dict]:
             rows = await cursor.fetchall()
             return [dict(r) for r in rows]
 
+_USER_LANG_CACHE: dict[int, str] = {}
 
+async def get_user_language(user_id: int) -> str:
+    uid = int(user_id)
+    if uid in _USER_LANG_CACHE:
+        return _USER_LANG_CACHE[uid]
+
+    lang = "en"
+    if USE_POSTGRES:
+        try:
+            pool = await get_pg_pool()
+            async with pool.acquire() as conn:
+                val = await conn.fetchval("SELECT lang_code FROM user_languages WHERE user_id = $1", uid)
+                if val:
+                    lang = str(val).strip()
+        except Exception as e:
+            logger.error(f"PG get_user_language error: {e}")
+    else:
+        import aiosqlite
+        async with aiosqlite.connect(DB_PATH) as db:
+            async with db.execute("SELECT lang_code FROM user_languages WHERE user_id = ?", (uid,)) as cursor:
+                row = await cursor.fetchone()
+                if row and row[0]:
+                    lang = str(row[0]).strip()
+
+    _USER_LANG_CACHE[uid] = lang
+    return lang
+
+async def set_user_language(user_id: int, lang_code: str):
+    uid = int(user_id)
+    clean_lang = str(lang_code).strip().lower()
+    if clean_lang not in ("en", "fa", "ar", "ur", "bn"):
+        clean_lang = "en"
+
+    _USER_LANG_CACHE[uid] = clean_lang
+
+    if USE_POSTGRES:
+        try:
+            pool = await get_pg_pool()
+            async with pool.acquire() as conn:
+                await conn.execute("CREATE TABLE IF NOT EXISTS user_languages (user_id BIGINT PRIMARY KEY, lang_code TEXT DEFAULT 'en');")
+                await conn.execute("""
+                    INSERT INTO user_languages (user_id, lang_code)
+                    VALUES ($1, $2)
+                    ON CONFLICT (user_id) DO UPDATE SET lang_code = $2
+                """, uid, clean_lang)
+                return
+        except Exception as e:
+            logger.error(f"PG set_user_language error: {e}")
+
+    import aiosqlite
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("CREATE TABLE IF NOT EXISTS user_languages (user_id INTEGER PRIMARY KEY, lang_code TEXT DEFAULT 'en')")
+        await db.execute("""
+            INSERT INTO user_languages (user_id, lang_code)
+            VALUES (?, ?)
+            ON CONFLICT(user_id) DO UPDATE SET lang_code = ?
+        """, (uid, clean_lang, clean_lang))
+        await db.commit()
