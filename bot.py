@@ -4,7 +4,7 @@ import logging
 import uuid
 import time
 import hashlib
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional, Union
 from dotenv import load_dotenv
 
 from telegram import (
