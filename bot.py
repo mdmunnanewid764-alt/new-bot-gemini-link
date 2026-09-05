@@ -5327,9 +5327,9 @@ def main():
     tg_base_url = os.getenv("TELEGRAM_BASE_URL")
 
     request_kwargs = {
-        "connect_timeout": 8.0,
-        "read_timeout": 15.0,
-        "write_timeout": 15.0,
+        "connect_timeout": 5.0,
+        "read_timeout": 10.0,
+        "write_timeout": 10.0,
         "pool_timeout": 5.0,
         "connection_pool_size": 100
     }
@@ -5338,7 +5338,9 @@ def main():
         request_kwargs["proxy_url"] = proxy_url
 
     request = HTTPXRequest(**request_kwargs)
-    builder = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).request(request).concurrent_updates(True)
+    get_updates_request = HTTPXRequest(connect_timeout=10.0, read_timeout=25.0, write_timeout=10.0, connection_pool_size=10)
+
+    builder = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).request(request).get_updates_request(get_updates_request).concurrent_updates(True)
     if tg_base_url:
         logger.info(f"Using custom Telegram Base URL: {tg_base_url}")
         builder.base_url(tg_base_url)
@@ -5417,7 +5419,7 @@ def main():
         logger.warning(f"Initial setup warning: {e}")
 
     logger.info("Bot successfully configured. Launching polling (with auto-retry & instant concurrency)...")
-    app.run_polling(bootstrap_retries=-1, drop_pending_updates=True, allowed_updates=Update.ALL_TYPES)
+    app.run_polling(poll_interval=0.0, timeout=10, bootstrap_retries=-1, drop_pending_updates=True, allowed_updates=Update.ALL_TYPES)
 
 if __name__ == "__main__":
     main()
