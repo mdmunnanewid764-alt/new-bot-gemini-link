@@ -254,9 +254,67 @@ def main_menu_keyboard(user_id: int) -> InlineKeyboardMarkup:
 
 # --- HANDLERS ---
 
+async def show_product_detail_direct(update_or_query, context: ContextTypes.DEFAULT_TYPE, prod_id: int):
+    try:
+        p = await catalog_sync.get_local_product(prod_id)
+        if not p:
+            msg = "⚠️ Product not found or out of stock."
+            kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to Catalog", callback_data="nav_products")]])
+            if hasattr(update_or_query, "edit_message_text"):
+                await update_or_query.edit_message_text(msg, reply_markup=kb)
+            elif hasattr(update_or_query, "message") and update_or_query.message:
+                await update_or_query.message.reply_text(msg, reply_markup=kb)
+            return
+
+        name = p.get("name", "Digital Product")
+        price = float(p.get("sell_price", 0.0))
+        stock = p.get("stock_count")
+        stock_str = f"{stock} available" if stock is not None else "Unlimited"
+
+        text = (
+            f"📦 *Product Details*\n\n"
+            f"📌 *Name:* {name}\n"
+            f"💵 *Price:* `${price:.2f}` USD\n"
+            f"📊 *Stock:* {stock_str}\n"
+            f"🆔 *Product ID:* `{prod_id}`\n\n"
+            "⚡ *Instant automated delivery after purchase.*"
+        )
+
+        buttons = [
+            [InlineKeyboardButton("🛒 Buy Now", callback_data=f"qty_{prod_id}_1")],
+            [
+                InlineKeyboardButton("🔙 Back to Catalog", callback_data="nav_products"),
+                InlineKeyboardButton("🏠 Main Menu", callback_data="nav_main")
+            ]
+        ]
+        if hasattr(update_or_query, "edit_message_text"):
+            await update_or_query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(buttons))
+        elif hasattr(update_or_query, "message") and update_or_query.message:
+            await update_or_query.message.reply_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(buttons))
+    except Exception as e:
+        logger.error(f"Error direct product detail: {e}")
+
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     asyncio.create_task(database.register_user(user.id, user.username, user.first_name))
+
+    # Deep-link routing from broadcast buttons or external links
+    if context.args:
+        arg = context.args[0].strip()
+        if arg.lower() in ("shop", "products", "group_order"):
+            await show_products_list(update, context, page=1)
+            return
+        elif arg.lower().startswith("prod_"):
+            try:
+                p_id = int(arg.lower().replace("prod_", ""))
+                await show_product_detail_direct(update, context, p_id)
+                return
+            except Exception:
+                pass
+        elif arg.lower() in ("deposit", "group_deposit", "topup"):
+            await show_deposit_menu(update, context)
+            return
+
     balance = await database.get_user_balance(user.id)
 
     welcome_text = (
@@ -1069,6 +1127,8 @@ async def show_admin_panel(update_or_query, context: ContextTypes.DEFAULT_TYPE):
         "waiting_for_admin_setexactbalance",
         "waiting_for_admin_checkbalance",
         "waiting_for_admin_broadcast",
+        "waiting_for_admin_pricedrop_new_price",
+        "waiting_for_admin_pricedrop_custom",
         "waiting_for_admin_setmargin_default",
         "waiting_for_admin_setmargin_product",
         "waiting_for_admin_setmargin",
@@ -1143,13 +1203,14 @@ async def show_admin_panel(update_or_query, context: ContextTypes.DEFAULT_TYPE):
         ],
         [
             InlineKeyboardButton("📢 Broadcast Message", callback_data="admin_broadcast"),
+            InlineKeyboardButton("🔥 Price Drop Alert", callback_data="admin_pricedrop_start"),
+        ],
+        [
             InlineKeyboardButton("👨‍💼 Manage Assistants", callback_data="admin_manage_assistants"),
-        ],
-        [
             InlineKeyboardButton("🔄 Sync Products", callback_data="admin_sync"),
-            InlineKeyboardButton("💾 Download Backup", callback_data="admin_backup"),
         ],
         [
+            InlineKeyboardButton("💾 Download Backup", callback_data="admin_backup"),
             InlineKeyboardButton("🏠 Main Menu", callback_data="nav_main"),
         ],
     ]
@@ -2924,6 +2985,30 @@ async def handle_admin_router(update: Update, context: ContextTypes.DEFAULT_TYPE
             parse_mode=ParseMode.MARKDOWN,
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="nav_admin")]])
         )
+    elif data == "admin_pricedrop_start" or data.startswith("admin_pricedrop_page_"):
+        page = 1
+        if data.startswith("admin_pricedrop_page_"):
+            try:
+                page = int(data.split("_")[-1])
+            except ValueError:
+                page = 1
+        await handle_admin_pricedrop_list(query, context, page=page)
+    elif data.startswith("admin_pricedrop_sel_"):
+        p_id = int(data.replace("admin_pricedrop_sel_", ""))
+        await handle_admin_pricedrop_select_product(query, context, p_id)
+    elif data == "admin_pricedrop_custom":
+        context.user_data["waiting_for_admin_pricedrop_custom"] = True
+        await query.edit_message_text(
+            "🔥 *Custom Price Drop Announcement*\n\n"
+            "Send your price drop announcement details in this format:\n"
+            "`<Product Name> | <Old Price> | <New Price> | <Optional Note>`\n\n"
+            "📌 *Example:*\n"
+            "`Gemini Advanced 1 Month | 10.00 | 6.50 | ⚡ 35% OFF - Special promo offer!`",
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="admin_pricedrop_start")]])
+        )
+    elif data == "admin_pricedrop_confirm":
+        await handle_admin_pricedrop_send(query, context)
     elif data == "admin_binance_balance":
         await handle_admin_binance_balance_callback(query, context)
     elif data == "admin_binance_keys":
@@ -3856,6 +3941,66 @@ async def handle_user_text_input(update: Update, context: ContextTypes.DEFAULT_T
             parse_mode=ParseMode.MARKDOWN,
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin")]])
         )
+        return
+
+    # ── Admin: Price Drop New Price Input ──
+    if context.user_data.get("waiting_for_admin_pricedrop_new_price") and is_admin(user.id):
+        context.user_data["waiting_for_admin_pricedrop_new_price"] = False
+        prod = context.user_data.get("pricedrop_selected_prod")
+        if not prod:
+            await update.message.reply_text("❌ No product selected. Please try again from Admin Panel.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin")]]))
+            return
+
+        raw_input = text.strip()
+        note = ""
+        old_price = float(prod.get("sell_price", 0.0))
+        if "|" in raw_input:
+            parts = [p.strip() for p in raw_input.split("|", 1)]
+            price_str = parts[0]
+            note = parts[1]
+        else:
+            price_str = raw_input
+
+        sub_parts = price_str.split()
+        if len(sub_parts) >= 2:
+            try:
+                old_price = float(sub_parts[0].replace("$", ""))
+                new_price = float(sub_parts[1].replace("$", ""))
+            except ValueError:
+                new_price = float(sub_parts[-1].replace("$", ""))
+        else:
+            try:
+                new_price = float(price_str.replace("$", ""))
+            except ValueError:
+                await update.message.reply_text("❌ Invalid price format. Please enter a valid number (e.g. `6.50` or `10.00 6.50`).")
+                return
+
+        await create_and_preview_pricedrop(update, context, prod_name=prod["name"], prod_id=prod["id"], old_price=old_price, new_price=new_price, note=note)
+        return
+
+    # ── Admin: Custom Price Drop Input ──
+    if context.user_data.get("waiting_for_admin_pricedrop_custom") and is_admin(user.id):
+        context.user_data["waiting_for_admin_pricedrop_custom"] = False
+        raw_input = text.strip()
+        parts = [p.strip() for p in raw_input.split("|")]
+        if len(parts) < 3:
+            await update.message.reply_text(
+                "❌ *Invalid format.*\n\nPlease use: `<Product Name> | <Old Price> | <New Price> | <Optional Note>`\n\nExample: `Gemini Pro | 10.00 | 6.50 | Limited stock discount!`",
+                parse_mode=ParseMode.MARKDOWN,
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="admin_pricedrop_start")]])
+            )
+            return
+
+        prod_name = parts[0]
+        try:
+            old_p = float(parts[1].replace("$", "").strip())
+            new_p = float(parts[2].replace("$", "").strip())
+        except ValueError:
+            await update.message.reply_text("❌ Invalid prices. Please make sure old price and new price are valid numbers.")
+            return
+
+        note = parts[3].strip() if len(parts) > 3 else ""
+        await create_and_preview_pricedrop(update, context, prod_name=prod_name, prod_id=None, old_price=old_p, new_price=new_p, note=note)
         return
 
     # ── Admin: Set Direct Gemini Selling Price ──
@@ -4913,17 +5058,36 @@ async def addbalance_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
         reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin")]])
     )
 
-async def send_broadcast_background(bot, admin_id: int, message_text: str):
+async def send_broadcast_background(bot, admin_id: int, message_text: str, reply_markup=None, send_to_group: bool = True, group_markup=None):
     """Send broadcast messages in background with rate-limiting without blocking user interactions."""
     all_users = await database.get_all_user_ids()
     total_users = len(all_users)
     success_count = 0
     fail_count = 0
     
+    # Also broadcast to Notification Group if enabled
+    if send_to_group:
+        try:
+            grp_id = await get_notification_group_id()
+            if grp_id:
+                await bot.send_message(
+                    chat_id=grp_id,
+                    text=message_text,
+                    parse_mode=ParseMode.MARKDOWN,
+                    reply_markup=group_markup or reply_markup
+                )
+        except Exception as ge:
+            logger.warning(f"Could not broadcast to group: {ge}")
+
     logger.info(f"Starting background broadcast to {total_users} users...")
     for u_id in all_users:
         try:
-            await bot.send_message(chat_id=u_id, text=message_text, parse_mode=ParseMode.MARKDOWN)
+            await bot.send_message(
+                chat_id=u_id,
+                text=message_text,
+                parse_mode=ParseMode.MARKDOWN,
+                reply_markup=reply_markup
+            )
             success_count += 1
         except Exception:
             fail_count += 1
@@ -4944,6 +5108,191 @@ async def send_broadcast_background(bot, admin_id: int, message_text: str):
         )
     except Exception as e:
         logger.error(f"Error sending broadcast completion notification: {e}")
+
+async def handle_admin_pricedrop_list(query_or_update, context: ContextTypes.DEFAULT_TYPE, page: int = 1):
+    try:
+        products = await catalog_sync.get_local_catalog()
+    except Exception as e:
+        logger.error(f"Error fetching catalog for price drop: {e}")
+        products = []
+
+    ITEMS_PER_PAGE = 6
+    total_products = len(products)
+    total_pages = max(1, (total_products + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE)
+    current_page = max(1, min(page, total_pages))
+
+    start_idx = (current_page - 1) * ITEMS_PER_PAGE
+    end_idx = start_idx + ITEMS_PER_PAGE
+    page_products = products[start_idx:end_idx]
+
+    text = (
+        "🔥 *Price Drop / Discount Broadcast Setup*\n\n"
+        "📢 Select a product below to announce its price drop to all users, or create a custom announcement:\n\n"
+        f"📄 *Page {current_page}/{total_pages}* ({total_products} products total)"
+    )
+
+    buttons = []
+    for p in page_products:
+        p_id = p["id"]
+        p_name = p.get("name", f"Product {p_id}")
+        price = float(p.get("sell_price", 0.0))
+        btn_text = f"🏷️ {p_name[:26]} (${price:.2f})"
+        buttons.append([InlineKeyboardButton(btn_text, callback_data=f"admin_pricedrop_sel_{p_id}")])
+
+    # Pagination buttons
+    nav_row = []
+    if current_page > 1:
+        nav_row.append(InlineKeyboardButton("⬅️ Prev", callback_data=f"admin_pricedrop_page_{current_page - 1}"))
+    if total_pages > 1:
+        nav_row.append(InlineKeyboardButton(f"📄 {current_page}/{total_pages}", callback_data=f"admin_pricedrop_page_{current_page}"))
+    if current_page < total_pages:
+        nav_row.append(InlineKeyboardButton("Next ➡️", callback_data=f"admin_pricedrop_page_{current_page + 1}"))
+    if nav_row:
+        buttons.append(nav_row)
+
+    buttons.append([InlineKeyboardButton("✏️ Custom Product Announcement", callback_data="admin_pricedrop_custom")])
+    buttons.append([InlineKeyboardButton("🔙 Admin Panel", callback_data="nav_admin")])
+
+    markup = InlineKeyboardMarkup(buttons)
+    if hasattr(query_or_update, "edit_message_text"):
+        await query_or_update.edit_message_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=markup)
+    elif hasattr(query_or_update, "message") and query_or_update.message:
+        await query_or_update.message.reply_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=markup)
+
+async def handle_admin_pricedrop_select_product(query, context: ContextTypes.DEFAULT_TYPE, prod_id: int):
+    p = await catalog_sync.get_local_product(prod_id)
+    if not p:
+        await query.answer("❌ Product not found.", show_alert=True)
+        await handle_admin_pricedrop_list(query, context, page=1)
+        return
+
+    context.user_data["pricedrop_selected_prod"] = p
+    context.user_data["waiting_for_admin_pricedrop_new_price"] = True
+
+    p_name = p.get("name", f"Product {prod_id}")
+    cur_price = float(p.get("sell_price", 0.0))
+
+    text = (
+        "🔥 *Price Drop Announcement Setup*\n\n"
+        f"📦 *Product:* `{p_name}`\n"
+        f"💰 *Current Regular Price:* `${cur_price:.2f}` USD\n\n"
+        "👉 *Please reply with the NEW DISCOUNTED PRICE:* (and optional note)\n\n"
+        "📝 *Formatting Examples:*\n"
+        "• `5.00` _(New price $5.00)_\n"
+        "• `6.50 | ⚡ 35% OFF - Special Weekend Deal!`\n"
+        "• `10.00 6.50 | Limited stock discount`"
+    )
+
+    buttons = [
+        [InlineKeyboardButton("🔙 Back to Products", callback_data="admin_pricedrop_start")],
+        [InlineKeyboardButton("❌ Cancel", callback_data="nav_admin")]
+    ]
+    await query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(buttons))
+
+async def create_and_preview_pricedrop(update_or_query, context: ContextTypes.DEFAULT_TYPE, prod_name: str, prod_id: Optional[int], old_price: float, new_price: float, note: str = ""):
+    savings = max(0.0, old_price - new_price)
+    discount_pct = (savings / old_price * 100) if old_price > 0 else 0.0
+
+    note_line = f"\n📝 *Note:* {note}\n" if note else "\n"
+
+    broadcast_msg = (
+        "🔥 *SPECIAL PRICE DROP ALERT!* 🔥\n\n"
+        f"🎉 *দাম কমানো হয়েছে! (Price Reduced)*\n"
+        f"The price for *{prod_name}* has been dropped!\n\n"
+        f"📦 *Product:* `{prod_name}`\n"
+        f"💰 *Previous Price:* ~~~${old_price:.2f} USD~~~\n"
+        f"🏷️ *New Discount Price:* **${new_price:.2f} USD**\n"
+        f"⚡ *You Save:* `${savings:.2f} USD` ({discount_pct:.0f}% OFF!)\n"
+        f"{note_line}"
+        "🛍️ *Instant automated delivery directly in bot!*\n"
+        "👇 *কেনার জন্য নিচের বাটনে ক্লিক করুন:*"
+    )
+
+    context.user_data["pricedrop_draft"] = {
+        "text": broadcast_msg,
+        "prod_id": prod_id,
+        "prod_name": prod_name,
+        "new_price": new_price
+    }
+
+    preview_text = (
+        "📢 *Price Drop Broadcast Preview:*\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        f"{broadcast_msg}\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        "🔘 *Attached Interactive Button:* `🛒 Buy Now / Go to Shop 🚀`\n\n"
+        "⚡ *Do you want to broadcast this message to ALL registered users and group?*"
+    )
+
+    buttons = [
+        [InlineKeyboardButton("🚀 Confirm & Send Broadcast", callback_data="admin_pricedrop_confirm")],
+        [
+            InlineKeyboardButton("✏️ Edit / Select Other", callback_data="admin_pricedrop_start"),
+            InlineKeyboardButton("❌ Cancel", callback_data="nav_admin")
+        ]
+    ]
+
+    if hasattr(update_or_query, "message") and update_or_query.message:
+        await update_or_query.message.reply_text(preview_text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(buttons))
+    elif hasattr(update_or_query, "edit_message_text"):
+        await update_or_query.edit_message_text(preview_text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(buttons))
+
+async def handle_admin_pricedrop_send(query, context: ContextTypes.DEFAULT_TYPE):
+    draft = context.user_data.get("pricedrop_draft")
+    if not draft:
+        await query.answer("❌ No active broadcast draft found.", show_alert=True)
+        await show_admin_panel(query, context)
+        return
+
+    msg_text = draft["text"]
+    prod_id = draft.get("prod_id")
+
+    try:
+        bot_info = await context.bot.get_me()
+        bot_user = bot_info.username or "NexvoraGeminiShopebot"
+    except Exception:
+        bot_user = "NexvoraGeminiShopebot"
+
+    # User button (direct callback in private chat)
+    if prod_id:
+        user_kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🛒 Buy Now / Go to Shop 🚀", callback_data=f"prod_{prod_id}")]
+        ])
+        group_kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🛒 Buy Now / Go to Shop 🚀", url=f"https://t.me/{bot_user}?start=prod_{prod_id}")]
+        ])
+    else:
+        user_kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🛒 Open Shop / Buy Now 🚀", callback_data="nav_products")]
+        ])
+        group_kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🛒 Open Shop / Buy Now 🚀", url=f"https://t.me/{bot_user}?start=shop")]
+        ])
+
+    admin_id = query.from_user.id
+    all_users = await database.get_all_user_ids()
+    
+    # Launch background broadcast with the button
+    asyncio.create_task(send_broadcast_background(context.bot, admin_id, msg_text, reply_markup=user_kb, send_to_group=True, group_markup=group_kb))
+
+    context.user_data.pop("pricedrop_draft", None)
+    context.user_data.pop("pricedrop_selected_prod", None)
+
+    await query.edit_message_text(
+        f"🚀 *Price Drop Announcement Broadcast Launched!*\n\n"
+        f"👥 Sending to `{len(all_users)}` users and notification group in the background.\n"
+        f"🔘 Attached button: `🛒 Buy Now / Go to Shop 🚀`\n\n"
+        "⚡ The bot continues operating normally. You will receive a summary when completed.",
+        parse_mode=ParseMode.MARKDOWN,
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin")]])
+    )
+
+async def pricedrop_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    if not is_admin(user.id):
+        await update.message.reply_text("❌ Unauthorized.")
+        return
+    await handle_admin_pricedrop_list(update, context, page=1)
 
 async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -5385,6 +5734,7 @@ def main():
     app.add_handler(CommandHandler(["binancebalance", "bbalance"], binancebalance_command))
     app.add_handler(CommandHandler("stats", stats_command))
     app.add_handler(CommandHandler("broadcast", broadcast_command))
+    app.add_handler(CommandHandler(["pricedrop", "discount", "discountbroadcast"], pricedrop_command))
     app.add_handler(CommandHandler(["blockbuying", "blockbuyer"], blockbuying_command))
     app.add_handler(CommandHandler(["unblockbuying", "unblockbuyer"], unblockbuying_command))
     app.add_handler(CommandHandler(["blockedusers", "blockedbuyers"], blockedusers_command))
