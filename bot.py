@@ -284,7 +284,10 @@ async def show_withdraw_menu(query, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_navigation(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
+    try:
+        asyncio.create_task(query.answer())
+    except Exception:
+        pass
     user = query.from_user
     await database.register_user(user.id, user.username, user.first_name)
     
@@ -2299,7 +2302,10 @@ async def handle_admin_reseller_keys_callback(query, context: ContextTypes.DEFAU
 
 async def handle_admin_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
+    try:
+        asyncio.create_task(query.answer())
+    except Exception:
+        pass
     user_id = query.from_user.id
     if not is_product_manager(user_id):
         await query.edit_message_text("❌ Unauthorized access.")

@@ -326,8 +326,23 @@ async def sync_catalog_now(api_client: Optional[ShopAPIClient] = None, bot = Non
         "restocked_count": len(restocked_products)
     }
 
+_CATALOG_CACHE: dict[str, Any] = {}
+_CATALOG_CACHE_TS: float = 0.0
+
+def invalidate_catalog_cache():
+    global _CATALOG_CACHE, _CATALOG_CACHE_TS
+    _CATALOG_CACHE.clear()
+    _CATALOG_CACHE_TS = 0.0
+
 async def get_local_catalog(filter_gemini: Optional[bool] = None) -> List[Dict[str, Any]]:
     """Retrieve in-stock synced products from local DB with added profit margin."""
+    import time
+    global _CATALOG_CACHE, _CATALOG_CACHE_TS
+    cache_key = f"{filter_gemini}"
+    now_ts = time.time()
+    if now_ts - _CATALOG_CACHE_TS < 15.0 and cache_key in _CATALOG_CACHE:
+        return _CATALOG_CACHE[cache_key]
+
     margins = await database.get_all_margins()
     default_margin = margins.get("default", 0.20)
 
@@ -424,6 +439,8 @@ async def get_local_catalog(filter_gemini: Optional[bool] = None) -> List[Dict[s
         logger.error(f"Error ordering pinned products: {e}")
         products = unpinned_products
 
+    _CATALOG_CACHE[cache_key] = products
+    _CATALOG_CACHE_TS = now_ts
     return products
 
 async def get_gemini_products() -> List[Dict[str, Any]]:

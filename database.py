@@ -333,8 +333,9 @@ async def init_db():
         await db.commit()
         logger.info("SQLite database tables initialized.")
 
-async def register_user(user_id: int, username: str = None, first_name: str = None):
-    now = datetime.utcnow().isoformat()
+_LAST_SEEN_CACHE: dict[int, float] = {}
+
+async def _register_user_pg_or_sqlite(user_id: int, username: str, first_name: str, now: str):
     if USE_POSTGRES:
         try:
             pool = await get_pg_pool()
@@ -350,18 +351,32 @@ async def register_user(user_id: int, username: str = None, first_name: str = No
                 return
         except Exception as e:
             logger.error(f"PG register_user error: {e}")
+    else:
+        import aiosqlite
+        async with aiosqlite.connect(DB_PATH) as db:
+            await db.execute("""
+                INSERT INTO users (user_id, username, first_name, created_at, last_active)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(user_id) DO UPDATE SET
+                    username = excluded.username,
+                    first_name = excluded.first_name,
+                    last_active = excluded.last_active
+            """, (user_id, username, first_name, now, now))
+            await db.commit()
 
-    import aiosqlite
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute("""
-            INSERT INTO users (user_id, username, first_name, created_at, last_active)
-            VALUES (?, ?, ?, ?, ?)
-            ON CONFLICT(user_id) DO UPDATE SET
-                username = excluded.username,
-                first_name = excluded.first_name,
-                last_active = excluded.last_active
-        """, (user_id, username, first_name, now, now))
-        await db.commit()
+async def register_user(user_id: int, username: str = None, first_name: str = None):
+    import time
+    now_ts = time.time()
+    uid = int(user_id)
+    last_seen = _LAST_SEEN_CACHE.get(uid, 0)
+    if now_ts - last_seen < 300:
+        return
+    _LAST_SEEN_CACHE[uid] = now_ts
+    now = datetime.utcnow().isoformat()
+    try:
+        asyncio.create_task(_register_user_pg_or_sqlite(uid, username, first_name, now))
+    except Exception:
+        pass
 
 async def get_user_count() -> int:
     if USE_POSTGRES:
@@ -1655,8 +1670,23 @@ async def add_custom_product(name: str, price: float, description: str = "", cre
         await db.commit()
         return cursor.lastrowid
 
+_CUSTOM_PRODUCTS_CACHE: dict[str, list] = {}
+_CUSTOM_PRODUCTS_CACHE_TS: float = 0.0
+
+def invalidate_custom_products_cache():
+    global _CUSTOM_PRODUCTS_CACHE, _CUSTOM_PRODUCTS_CACHE_TS
+    _CUSTOM_PRODUCTS_CACHE.clear()
+    _CUSTOM_PRODUCTS_CACHE_TS = 0.0
+
 async def get_custom_products(only_active: bool = True, created_by: int = None) -> list[dict]:
     """Retrieve in-house products with live available stock count. If created_by is given, filters to that creator."""
+    import time
+    global _CUSTOM_PRODUCTS_CACHE, _CUSTOM_PRODUCTS_CACHE_TS
+    cache_key = f"{bool(only_active)}_{created_by}"
+    now_ts = time.time()
+    if now_ts - _CUSTOM_PRODUCTS_CACHE_TS < 15.0 and cache_key in _CUSTOM_PRODUCTS_CACHE:
+        return _CUSTOM_PRODUCTS_CACHE[cache_key]
+
     rows = []
     if USE_POSTGRES:
         try:
@@ -1713,6 +1743,9 @@ async def get_custom_products(only_active: bool = True, created_by: int = None) 
             async with db.execute(query, tuple(params)) as cursor:
                 res = await cursor.fetchall()
                 rows = [dict(r) for r in res]
+
+    _CUSTOM_PRODUCTS_CACHE[cache_key] = rows
+    _CUSTOM_PRODUCTS_CACHE_TS = now_ts
     return rows
 
 async def get_custom_product(product_id: int) -> Optional[dict]:
