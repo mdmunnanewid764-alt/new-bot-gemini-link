@@ -73,10 +73,11 @@ async def get_pg_pool():
             password=password,
             database=database_name,
             ssl="require",
-            min_size=2,
-            max_size=25,
+            min_size=5,
+            max_size=35,
             timeout=10,
-            command_timeout=10
+            command_timeout=10,
+            max_inactive_connection_lifetime=300
         )
         _pg_pool_loop = current_loop
     return _pg_pool

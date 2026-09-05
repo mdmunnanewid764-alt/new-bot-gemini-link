@@ -1,4 +1,9 @@
 import os
+try:
+    import uvloop
+    uvloop.install()
+except Exception:
+    pass
 import logging
 import uuid
 import time
@@ -5310,9 +5315,11 @@ def main():
     tg_base_url = os.getenv("TELEGRAM_BASE_URL")
 
     request_kwargs = {
-        "connect_timeout": 15.0,
-        "read_timeout": 20.0,
-        "connection_pool_size": 32
+        "connect_timeout": 8.0,
+        "read_timeout": 15.0,
+        "write_timeout": 15.0,
+        "pool_timeout": 5.0,
+        "connection_pool_size": 100
     }
     if proxy_url:
         logger.info(f"Using Proxy: {proxy_url}")
@@ -5325,7 +5332,11 @@ def main():
         builder.base_url(tg_base_url)
 
     async def on_startup(application):
-        logger.info("Bot application started. Launching background product auto-sync (every 2 mins)...")
+        logger.info("Bot application started. Warming up cache and launching background services...")
+        try:
+            await reload_assistants_cache()
+        except Exception as e:
+            logger.warning(f"Initial assistants cache warm-up error: {e}")
         asyncio.create_task(catalog_sync.start_periodic_catalog_sync(api_client, bot=application.bot, interval_seconds=120))
         # Launch REST API Web Server & Docs Portal
         if api_server:
