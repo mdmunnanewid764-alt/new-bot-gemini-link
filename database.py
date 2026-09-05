@@ -1662,9 +1662,13 @@ async def get_custom_products(only_active: bool = True, created_by: int = None) 
             async with pool.acquire() as conn:
                 query = """
                     SELECT p.id, p.name, p.price, p.description, p.is_active, p.created_by, p.created_at,
+                           COALESCE(u.username, a.username) AS creator_username,
+                           COALESCE(u.first_name, a.first_name) AS creator_first_name,
                            COALESCE(COUNT(s.id) FILTER (WHERE s.is_sold = 0), 0) as stock_count
                     FROM custom_products p
                     LEFT JOIN custom_product_stocks s ON p.id = s.product_id
+                    LEFT JOIN users u ON p.created_by = u.user_id
+                    LEFT JOIN assistants a ON p.created_by = a.user_id
                 """
                 params = []
                 where_clauses = []
@@ -1675,7 +1679,7 @@ async def get_custom_products(only_active: bool = True, created_by: int = None) 
                     where_clauses.append(f"p.created_by = ${len(params)}")
                 if where_clauses:
                     query += " WHERE " + " AND ".join(where_clauses)
-                query += " GROUP BY p.id ORDER BY p.id ASC"
+                query += " GROUP BY p.id, u.username, a.username, u.first_name, a.first_name ORDER BY p.id ASC"
                 res = await conn.fetch(query, *params)
                 rows = [dict(r) for r in res]
         except Exception as e:
@@ -1686,9 +1690,13 @@ async def get_custom_products(only_active: bool = True, created_by: int = None) 
             db.row_factory = aiosqlite.Row
             query = """
                 SELECT p.id, p.name, p.price, p.description, p.is_active, p.created_by, p.created_at,
+                       COALESCE(u.username, a.username) AS creator_username,
+                       COALESCE(u.first_name, a.first_name) AS creator_first_name,
                        COALESCE(SUM(CASE WHEN s.is_sold = 0 THEN 1 ELSE 0 END), 0) as stock_count
                 FROM custom_products p
                 LEFT JOIN custom_product_stocks s ON p.id = s.product_id
+                LEFT JOIN users u ON p.created_by = u.user_id
+                LEFT JOIN assistants a ON p.created_by = a.user_id
             """
             params = []
             where_clauses = []
@@ -1699,25 +1707,29 @@ async def get_custom_products(only_active: bool = True, created_by: int = None) 
                 where_clauses.append("p.created_by = ?")
             if where_clauses:
                 query += " WHERE " + " AND ".join(where_clauses)
-            query += " GROUP BY p.id ORDER BY p.id ASC"
+            query += " GROUP BY p.id, u.username, a.username, u.first_name, a.first_name ORDER BY p.id ASC"
             async with db.execute(query, tuple(params)) as cursor:
                 res = await cursor.fetchall()
                 rows = [dict(r) for r in res]
     return rows
 
 async def get_custom_product(product_id: int) -> Optional[dict]:
-    """Retrieve single custom product with live stock count and created_by."""
+    """Retrieve single custom product with live stock count and creator info."""
     if USE_POSTGRES:
         try:
             pool = await get_pg_pool()
             async with pool.acquire() as conn:
                 r = await conn.fetchrow("""
                     SELECT p.id, p.name, p.price, p.description, p.is_active, p.created_by, p.created_at,
+                           COALESCE(u.username, a.username) AS creator_username,
+                           COALESCE(u.first_name, a.first_name) AS creator_first_name,
                            COALESCE(COUNT(s.id) FILTER (WHERE s.is_sold = 0), 0) as stock_count
                     FROM custom_products p
                     LEFT JOIN custom_product_stocks s ON p.id = s.product_id
+                    LEFT JOIN users u ON p.created_by = u.user_id
+                    LEFT JOIN assistants a ON p.created_by = a.user_id
                     WHERE p.id = $1
-                    GROUP BY p.id
+                    GROUP BY p.id, u.username, a.username, u.first_name, a.first_name
                 """, int(product_id))
                 return dict(r) if r else None
         except Exception as e:
@@ -1728,11 +1740,15 @@ async def get_custom_product(product_id: int) -> Optional[dict]:
         db.row_factory = aiosqlite.Row
         async with db.execute("""
             SELECT p.id, p.name, p.price, p.description, p.is_active, p.created_by, p.created_at,
+                   COALESCE(u.username, a.username) AS creator_username,
+                   COALESCE(u.first_name, a.first_name) AS creator_first_name,
                    COALESCE(SUM(CASE WHEN s.is_sold = 0 THEN 1 ELSE 0 END), 0) as stock_count
             FROM custom_products p
             LEFT JOIN custom_product_stocks s ON p.id = s.product_id
+            LEFT JOIN users u ON p.created_by = u.user_id
+            LEFT JOIN assistants a ON p.created_by = a.user_id
             WHERE p.id = ?
-            GROUP BY p.id
+            GROUP BY p.id, u.username, a.username, u.first_name, a.first_name
         """, (int(product_id),)) as cursor:
             r = await cursor.fetchone()
             return dict(r) if r else None

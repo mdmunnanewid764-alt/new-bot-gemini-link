@@ -1299,8 +1299,20 @@ async def handle_admin_custom_products_callback(update_or_query, context: Contex
         stock = int(p.get("stock_count", 0))
         status_dot = "🟢" if p.get("is_active") == 1 else "🔴"
         creator_tag = ""
-        if is_super_admin(user_id) and p.get("created_by"):
-            creator_tag = f" | 👤 Manager: `{p['created_by']}`"
+        if is_super_admin(user_id):
+            c_by = p.get("created_by")
+            if c_by and int(c_by) != ADMIN_ID:
+                c_user = p.get("creator_username")
+                c_fn = p.get("creator_first_name")
+                if c_user:
+                    creator_str = f"@{c_user} (ID: `{c_by}`)"
+                elif c_fn:
+                    creator_str = f"{c_fn} (ID: `{c_by}`)"
+                else:
+                    creator_str = f"ID: `{c_by}`"
+            else:
+                creator_str = "👑 Super Admin (Owner)"
+            creator_tag = f"\n👤 *Added By:* {creator_str}"
 
         text += (
             f"{status_dot} *ID `#{c_id}`:* {name}\n"
@@ -2814,8 +2826,25 @@ async def handle_admin_router(update: Update, context: ContextTypes.DEFAULT_TYPE
         else:
             stock_text = "_No stock items loaded._"
 
+        creator_line = ""
+        if is_super_admin(user_id):
+            c_by = prod.get("created_by")
+            if c_by and int(c_by) != ADMIN_ID:
+                c_user = prod.get("creator_username")
+                c_fn = prod.get("creator_first_name")
+                if c_user:
+                    creator_str = f"@{c_user} (Chat ID: `{c_by}`)"
+                elif c_fn:
+                    creator_str = f"{c_fn} (Chat ID: `{c_by}`)"
+                else:
+                    creator_str = f"Chat ID: `{c_by}`"
+            else:
+                creator_str = "👑 Super Admin (Owner)"
+            creator_line = f"👤 *Added By:* {creator_str}\n"
+
         await query.edit_message_text(
             f"👁️ *Stock Preview for `{prod_name}`*\n\n"
+            f"{creator_line}"
             f"📊 *Total Available:* `{stock_cnt}` items\n\n"
             f"*Sample Next Items to be Delivered:*\n\n{stock_text}",
             parse_mode=ParseMode.MARKDOWN,
