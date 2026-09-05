@@ -1497,25 +1497,29 @@ async def handle_admin_binance_balance_callback(query, context: ContextTypes.DEF
     funding_assets = res.get("funding_assets", [])
 
     text = (
-        "🟡 *Binance Account Live Balances*\n\n"
-        f"💵 *Total Estimated Balance:* `${total_usdt:.2f}` USD\n"
-        f"• *Spot Wallet USDT:* `${spot_usdt:.2f}`\n"
-        f"• *Funding Wallet USDT:* `${funding_usdt:.2f}`\n\n"
+        "🟡 *Binance Account Live Portfolio*\n\n"
+        f"💵 *Total Live Balance:* `${total_usdt:.2f}` USD\n"
+        f"• *Spot Wallet:* `${spot_usdt:.2f}` USD\n"
+        f"• *Funding Wallet:* `${funding_usdt:.2f}` USD\n\n"
     )
 
     if spot_assets:
-        text += "*📊 Spot Wallet Non-Zero Assets:*\n"
-        for a in spot_assets[:8]:
-            text += f"• *{a['asset']}:* `{a['total']:.4f}` (Free: `{a['free']:.4f}`)\n"
+        text += "*📊 Spot Wallet Holdings:*\n"
+        for a in spot_assets[:10]:
+            usd_val = a.get("usd_val", 0.0)
+            usd_str = f" (`${usd_val:.2f} USD`)" if usd_val > 0.005 else ""
+            text += f"• *{a['asset']}:* `{a['total']:.4f}`{usd_str} (Free: `{a['free']:.4f}`)\n"
         text += "\n"
 
     if funding_assets:
-        text += "*💼 Funding Wallet Assets:*\n"
-        for fa in funding_assets[:5]:
-            text += f"• *{fa['asset']}:* `{fa['total']:.4f}`\n"
+        text += "*💼 Funding Wallet Holdings:*\n"
+        for fa in funding_assets[:8]:
+            usd_val = fa.get("usd_val", 0.0)
+            usd_str = f" (`${usd_val:.2f} USD`)" if usd_val > 0.005 else ""
+            text += f"• *{fa['asset']}:* `{fa['total']:.4f}`{usd_str}\n"
         text += "\n"
 
-    text += f"🟢 *Trading Enabled:* `{res.get('can_trade')}` | *Deposits:* `{res.get('can_deposit')}`"
+    text += f"🟢 *Trading:* `{'Enabled' if res.get('can_trade') else 'Disabled'}` | *Deposits:* `{'Enabled' if res.get('can_deposit') else 'Disabled'}`"
 
     buttons = [
         [

@@ -13,9 +13,10 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_BINANCE_ENDPOINTS = [
     "https://api.binance.com",
-    "https://api1.binance.com",
     "https://api2.binance.com",
+    "https://data-api.binance.vision",
     "https://api3.binance.com",
+    "https://api1.binance.com",
     "https://api4.binance.com",
 ]
 
@@ -60,7 +61,7 @@ class BinanceAPIClient:
     async def get_server_time_offset(self, client: httpx.AsyncClient, base_url: str) -> int:
         """Fetch server time from Binance and calculate offset relative to local clock."""
         try:
-            r = await client.get(f"{base_url}/api/v3/time")
+            r = await client.get(f"{base_url}/api/v3/time", timeout=4.0)
             if r.status_code == 200:
                 server_time = r.json().get("serverTime")
                 local_time = int(time.time() * 1000)
@@ -69,9 +70,21 @@ class BinanceAPIClient:
             pass
         return 0
 
+    async def get_ticker_prices(self, client: httpx.AsyncClient) -> dict[str, float]:
+        """Fetch real-time ticker prices from Binance to calculate USD valuation of all crypto assets."""
+        for ep in self.endpoints:
+            try:
+                r = await client.get(f"{ep}/api/v3/ticker/price", timeout=5.0)
+                if r.status_code == 200:
+                    return {item["symbol"]: float(item["price"]) for item in r.json()}
+            except Exception:
+                continue
+        return {}
+
     async def get_live_balances(self) -> Dict[str, Any]:
         """
-        Fetch Live Spot and Funding balances from Binance account across available endpoints.
+        Fetch Live Spot and Funding balances from Binance account across available endpoints
+        with accurate real-time USD conversion for all held cryptocurrencies (USDT, TRX, BTC, BNB, etc.).
         """
         api_key, api_secret = await self.get_credentials()
         if not api_key or not api_secret:
@@ -93,6 +106,27 @@ class BinanceAPIClient:
         last_error = "Unknown error"
 
         async with httpx.AsyncClient(**client_kwargs) as client:
+            prices = await self.get_ticker_prices(client)
+            stablecoins = {"USDT", "USDC", "BUSD", "FDUSD", "DAI", "TUSD", "USD"}
+
+            def get_usd_price(asset: str) -> float:
+                asset_u = asset.upper()
+                if asset_u in stablecoins:
+                    return 1.0
+                sym = f"{asset_u}USDT"
+                if sym in prices:
+                    return prices[sym]
+                sym_rev = f"USDT{asset_u}"
+                if sym_rev in prices and prices[sym_rev] > 0:
+                    return 1.0 / prices[sym_rev]
+                sym_usdc = f"{asset_u}USDC"
+                if sym_usdc in prices:
+                    return prices[sym_usdc]
+                sym_btc = f"{asset_u}BTC"
+                if sym_btc in prices and "BTCUSDT" in prices:
+                    return prices[sym_btc] * prices["BTCUSDT"]
+                return 0.0
+
             for base_url in self.endpoints:
                 try:
                     offset = await self.get_server_time_offset(client, base_url)
@@ -126,15 +160,21 @@ class BinanceAPIClient:
                         free = float(b["free"])
                         locked = float(b["locked"])
                         total = free + locked
-                        if total > 0.0001:
+                        if total > 0.00001:
+                            usd_p = get_usd_price(asset)
+                            usd_val = total * usd_p
                             spot_assets.append({
                                 "asset": asset,
                                 "free": free,
                                 "locked": locked,
-                                "total": total
+                                "total": total,
+                                "price": usd_p,
+                                "usd_val": usd_val
                             })
-                            if asset.upper() in ("USDT", "BUSD", "FDUSD", "USDC"):
-                                total_usdt_spot += total
+                            total_usdt_spot += usd_val
+
+                    # Sort spot assets by USD valuation descending
+                    spot_assets.sort(key=lambda x: x["usd_val"], reverse=True)
 
                     # 2. Fetch Funding Wallet Balances
                     try:
@@ -150,15 +190,19 @@ class BinanceAPIClient:
                                 free = float(fb["free"])
                                 locked = float(fb.get("locked", 0.0)) + float(fb.get("freeze", 0.0))
                                 total = free + locked
-                                if total > 0.0001:
+                                if total > 0.00001:
+                                    usd_p = get_usd_price(asset)
+                                    usd_val = total * usd_p
                                     funding_assets.append({
                                         "asset": asset,
                                         "free": free,
                                         "locked": locked,
-                                        "total": total
+                                        "total": total,
+                                        "price": usd_p,
+                                        "usd_val": usd_val
                                     })
-                                    if asset.upper() in ("USDT", "BUSD", "FDUSD", "USDC"):
-                                        total_usdt_funding += total
+                                    total_usdt_funding += usd_val
+                            funding_assets.sort(key=lambda x: x["usd_val"], reverse=True)
                     except Exception as fe:
                         logger.warning(f"Could not fetch funding assets: {fe}")
 
