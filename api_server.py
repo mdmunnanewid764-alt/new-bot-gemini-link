@@ -275,8 +275,26 @@ async def handle_create_order(request: web.Request) -> web.Response:
                 # Refund
                 await database.add_user_balance(user_id, total_price, reason="API_REFUND_OUT_OF_STOCK", ref_id=order_code)
                 return json_response({"error": "Not enough in-house stock available to fulfill order."}, status=409)
+        elif prod_id >= 70000:
+            # Devine Store API product (API 2)
+            from devine_api import DevineAPIClient
+            dev_client = DevineAPIClient()
+            slug = p.get("supplier_slug") or str(prod_id)
+            try:
+                dev_order = await dev_client.create_order(
+                    product_id=slug,
+                    quantity=quantity,
+                    idempotency_key=order_code
+                )
+                delivered_keys = dev_order.get("delivered_keys", [])
+                if not delivered_keys:
+                    await database.add_user_balance(user_id, total_price, reason="API_REFUND_SUPPLIER_EMPTY", ref_id=order_code)
+                    return json_response({"error": "Supplier fulfillment failed. Balance refunded."}, status=502)
+            except Exception as e:
+                await database.add_user_balance(user_id, total_price, reason="API_REFUND_SUPPLIER_ERROR", ref_id=order_code)
+                return json_response({"error": f"Devine Store API error: {e}"}, status=502)
         else:
-            # Synced API product from supplier
+            # Synced API product from supplier 1
             if not _upstream_api_client:
                 await database.add_user_balance(user_id, total_price, reason="API_REFUND_GATEWAY_DOWN", ref_id=order_code)
                 return json_response({"error": "Supplier gateway temporarily unavailable."}, status=503)
@@ -323,6 +341,7 @@ async def handle_create_order(request: web.Request) -> web.Response:
                     admin_keys_text = "\n\n⚠️ _No keys were delivered._"
 
                 # Determine Product Source
+                admin_prod_name = p["name"]
                 if is_custom:
                     custom_id = product_id - 90000 if product_id >= 90000 else product_id
                     cust_prod = await database.get_custom_product(custom_id)
@@ -354,15 +373,18 @@ async def handle_create_order(request: web.Request) -> web.Response:
                             source_line = "📦 *Source:* In-House Stock (Added By: 👑 Super Admin)"
                     else:
                         source_line = "📦 *Source:* In-House Stock"
+                elif prod_id >= 70000:
+                    source_line = "🌐 *Source:* Devine Store API 2 (Auto Synced)"
+                    admin_prod_name = f"{p['name']} 2"
                 else:
-                    source_line = "🌐 *Source:* Supplier API (Auto Synced)"
+                    source_line = "🌐 *Source:* Supplier API 1 (Auto Synced)"
 
                 notif_msg = (
                     f"⚡ *New API Order Processed (Admin Copy)*\n\n"
                     f"👤 *API User:* `{api_user.get('first_name')}` (`@{api_user.get('username') or 'N/A'}`)\n"
                     f"🆔 *User ID:* `{user_id}`\n"
                     f"🏷️ *Order Code:* `{order_code}`\n"
-                    f"📦 *Product:* `{p['name']}`\n"
+                    f"📦 *Product:* `{admin_prod_name}`\n"
                     f"{source_line}\n"
                     f"🔢 *Qty:* `{quantity}` | 💰 *Total:* `${total_price:.2f}` USD\n"
                     f"💳 *User Remaining Balance:* `${new_bal:.2f}` USD"

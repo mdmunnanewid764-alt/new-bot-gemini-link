@@ -1,18 +1,27 @@
 import asyncio
 import logging
 import aiosqlite
+import zlib
 from datetime import datetime
 from typing import List, Dict, Any, Optional
 import database
 from shop_api import ShopAPIClient, ShopAPIError
+from devine_api import DevineAPIClient, DevineAPIError
+from telegram.constants import ParseMode
+from telegram import InlineKeyboardMarkup, InlineKeyboardButton
 
 logger = logging.getLogger(__name__)
 
 # Flag to avoid announcing existing stock during the very first boot sync
 _is_first_sync_done: bool = False
 
+def slug_to_id(slug: str) -> int:
+    """Map string slug from Devine Store to a stable unique integer ID in 70001..79900."""
+    clean = str(slug).strip().lower()
+    return 70000 + (zlib.crc32(clean.encode("utf-8")) % 9900) + 1
+
 async def init_catalog_tables():
-    """Initialize synced catalog tables in PostgreSQL or SQLite with last_notified_stock tracking."""
+    """Initialize synced catalog tables in PostgreSQL or SQLite with last_notified_stock tracking and multi-provider support."""
     if database.USE_POSTGRES:
         try:
             pool = await database.get_pg_pool()
@@ -27,14 +36,23 @@ async def init_catalog_tables():
                         in_stock INTEGER,
                         is_enabled INTEGER DEFAULT 1,
                         last_notified_stock INTEGER DEFAULT 0,
-                        last_synced TEXT
+                        last_synced TEXT,
+                        api_source TEXT DEFAULT 'api1',
+                        supplier_slug TEXT,
+                        description TEXT
                     )
                 """)
-                # Ensure column exists if table already existed
-                try:
-                    await conn.execute("ALTER TABLE products_synced ADD COLUMN IF NOT EXISTS last_notified_stock INTEGER DEFAULT 0")
-                except Exception:
-                    pass
+                # Ensure columns exist if table already existed
+                for col_sql in [
+                    "ALTER TABLE products_synced ADD COLUMN IF NOT EXISTS last_notified_stock INTEGER DEFAULT 0",
+                    "ALTER TABLE products_synced ADD COLUMN IF NOT EXISTS api_source TEXT DEFAULT 'api1'",
+                    "ALTER TABLE products_synced ADD COLUMN IF NOT EXISTS supplier_slug TEXT",
+                    "ALTER TABLE products_synced ADD COLUMN IF NOT EXISTS description TEXT"
+                ]:
+                    try:
+                        await conn.execute(col_sql)
+                    except Exception:
+                        pass
 
                 await conn.execute("""
                     CREATE TABLE IF NOT EXISTS sync_history (
@@ -59,13 +77,22 @@ async def init_catalog_tables():
                 in_stock INTEGER,
                 is_enabled INTEGER DEFAULT 1,
                 last_notified_stock INTEGER DEFAULT 0,
-                last_synced TEXT
+                last_synced TEXT,
+                api_source TEXT DEFAULT 'api1',
+                supplier_slug TEXT,
+                description TEXT
             )
         """)
-        try:
-            await db.execute("ALTER TABLE products_synced ADD COLUMN last_notified_stock INTEGER DEFAULT 0")
-        except Exception:
-            pass
+        for col_name, col_type in [
+            ("last_notified_stock", "INTEGER DEFAULT 0"),
+            ("api_source", "TEXT DEFAULT 'api1'"),
+            ("supplier_slug", "TEXT"),
+            ("description", "TEXT")
+        ]:
+            try:
+                await db.execute(f"ALTER TABLE products_synced ADD COLUMN {col_name} {col_type}")
+            except Exception:
+                pass
 
         await db.execute("""
             CREATE TABLE IF NOT EXISTS sync_history (
@@ -78,77 +105,36 @@ async def init_catalog_tables():
         await db.commit()
 
 async def notify_new_products_alert(bot, new_products: List[Dict[str, Any]], restocked_products: List[Dict[str, Any]]):
-    """Notify group and all registered users ONCE when new products or fresh stock are added."""
+    """Broadcast an eye-catching alert to the group and all active users when genuine new products or restocks occur."""
     if not bot or (not new_products and not restocked_products):
         return
 
-    margins = await database.get_all_margins()
-    default_margin = margins.get("default", 0.20)
-
-    items_text = ""
-    if new_products:
-        items_text += "🆕 *Newly Added Products:*\n"
-        for p in new_products:
-            p_id = p["id"]
-            name = p["name"]
-            if p.get("is_custom") or (isinstance(p_id, int) and p_id >= 90000):
-                sell_p = float(p.get("sell_price", 0.0))
-            else:
-                supplier_p = float(p.get("sell_price", 0.0))
-                margin = margins.get(str(p_id), default_margin)
-                sell_p = round(supplier_p + margin, 2)
-            stock = p.get("stock_count")
-            stock_str = f"`{stock}` in stock" if stock is not None else "`Available`"
-
-            items_text += (
-                f"━━━━━━━━━━━━━━━━━━━\n"
-                f"📦 *{name}*\n"
-                f"💵 Price: `${sell_p:.2f}` USD\n"
-                f"📊 Stock Added: {stock_str}\n"
-                f"⚡ Auto-Delivered Instantly\n"
-            )
-
-    if restocked_products:
-        items_text += "\n🔄 *Restocked Products (Fresh Stock Added):*\n"
-        for p in restocked_products:
-            p_id = p["id"]
-            name = p["name"]
-            if p.get("is_custom") or (isinstance(p_id, int) and p_id >= 90000):
-                sell_p = float(p.get("sell_price", 0.0))
-            else:
-                supplier_p = float(p.get("sell_price", 0.0))
-                margin = margins.get(str(p_id), default_margin)
-                sell_p = round(supplier_p + margin, 2)
-            stock = p.get("stock_count")
-            added_cnt = p.get("added_count")
-            if added_cnt and added_cnt > 0:
-                stock_str = f"`+{added_cnt}` added (`{stock}` total)"
-            else:
-                stock_str = f"`{stock}` available" if stock is not None else "`Available`"
-
-            items_text += (
-                f"━━━━━━━━━━━━━━━━━━━\n"
-                f"📦 *{name}*\n"
-                f"💵 Price: `${sell_p:.2f}` USD\n"
-                f"📊 Stock: {stock_str}\n"
-                f"⚡ Auto-Delivered Instantly\n"
-            )
-
-    total_added = len(new_products) + len(restocked_products)
-    broadcast_msg = (
-        f"🎉 *New Products & Stock Restock Alert! ({total_added} items)*\n\n"
-        "We have just added fresh stock to the shop:\n\n"
-        f"{items_text}"
-        f"━━━━━━━━━━━━━━━━━━━\n\n"
-        "🛍️ *Tap the button below to browse and buy instantly!*"
-    )
-
     try:
-        from telegram import InlineKeyboardMarkup, InlineKeyboardButton
-        from telegram.constants import ParseMode
+        lines = []
+        if new_products:
+            lines.append("🔥 *NEW PRODUCTS JUST ADDED!* 🔥\n")
+            for p in new_products:
+                stock_str = f"`{p['stock_count']} in stock`" if p.get("stock_count") is not None else "`In Stock`"
+                lines.append(f"✨ *{p['name']}*\n   💰 Price: `${p['sell_price']:.2f}` USD | 📦 Stock: {stock_str}")
+            lines.append("")
 
-        bot_info = await bot.get_me()
-        bot_user = bot_info.username or "NexvoraGeminiShopebot"
+        if restocked_products:
+            lines.append("⚡ *FRESH RESTOCK ALERT!* ⚡\n")
+            for p in restocked_products:
+                added = p.get('added_count', 0)
+                tot = p.get('stock_count', 0)
+                lines.append(f"🔄 *{p['name']}*\n   ➕ Added: `+{added}` pcs | 📦 Total Available: `{tot}` pcs | 💰 `${p['sell_price']:.2f}`")
+            lines.append("")
+
+        lines.append("👉 _Grab yours now before it sells out!_")
+        broadcast_msg = "\n".join(lines)
+
+        try:
+            bot_info = await bot.get_me()
+            bot_user = bot_info.username or "NexvoraGeminiShopebot"
+        except Exception:
+            bot_user = "NexvoraGeminiShopebot"
+
         btn = InlineKeyboardMarkup([
             [InlineKeyboardButton("🛒 Open Shop / Buy Now 🚀", url=f"https://t.me/{bot_user}?start=new_products")]
         ])
@@ -182,29 +168,29 @@ async def notify_new_products_alert(bot, new_products: List[Dict[str, Any]], res
     except Exception as e:
         logger.error(f"Error notifying stock update: {e}")
 
-async def sync_catalog_now(api_client: Optional[ShopAPIClient] = None, bot = None) -> Dict[str, Any]:
-    """Fetch live products from Shop API and update database.
+async def sync_catalog_now(
+    api_client: Optional[ShopAPIClient] = None,
+    devine_client: Optional[DevineAPIClient] = None,
+    bot = None
+) -> Dict[str, Any]:
+    """Fetch live products from Supplier API 1 and Devine Store API 2 and update database.
     Detects newly added or restocked products and broadcasts EXACTLY ONCE when stock increases.
     """
     global _is_first_sync_done
     if api_client is None:
         api_client = ShopAPIClient()
+    if devine_client is None:
+        devine_client = DevineAPIClient()
 
     await init_catalog_tables()
 
-    try:
-        remote_products = await api_client.get_products()
-    except Exception as e:
-        logger.error(f"Catalog sync failed: {e}")
-        return {"status": "error", "message": str(e), "synced_count": 0}
-
-    # Fetch existing products with last_notified_stock from DB
+    # Fetch existing products from DB
     existing_products = {}
     if database.USE_POSTGRES:
         try:
             pool = await database.get_pg_pool()
             async with pool.acquire() as conn:
-                rows = await conn.fetch("SELECT supplier_product_id, name, sell_price, stock_count, in_stock, COALESCE(last_notified_stock, 0) as last_notified_stock FROM products_synced")
+                rows = await conn.fetch("SELECT supplier_product_id, name, sell_price, stock_count, in_stock, COALESCE(last_notified_stock, 0) as last_notified_stock, COALESCE(api_source, 'api1') as api_source, supplier_slug FROM products_synced")
                 for r in rows:
                     existing_products[r["supplier_product_id"]] = dict(r)
         except Exception as e:
@@ -212,108 +198,181 @@ async def sync_catalog_now(api_client: Optional[ShopAPIClient] = None, bot = Non
     else:
         async with aiosqlite.connect(database.DB_PATH) as db:
             db.row_factory = aiosqlite.Row
-            async with db.execute("SELECT supplier_product_id, name, sell_price, stock_count, in_stock, COALESCE(last_notified_stock, 0) as last_notified_stock FROM products_synced") as cursor:
+            async with db.execute("SELECT supplier_product_id, name, sell_price, stock_count, in_stock, COALESCE(last_notified_stock, 0) as last_notified_stock, COALESCE(api_source, 'api1') as api_source, supplier_slug FROM products_synced") as cursor:
                 rows = await cursor.fetchall()
                 for r in rows:
                     existing_products[r["supplier_product_id"]] = dict(r)
 
     now_str = datetime.utcnow().isoformat()
-    synced_ids = []
     new_products = []
     restocked_products = []
     products_to_save = []
 
-    for p in remote_products:
-        p_id = p.get("id") or p.get("product_id")
-        if not p_id:
-            continue
-        synced_ids.append(p_id)
-        name = p.get("name", "Product")
-        price = float(p.get("unit_price") if p.get("unit_price") is not None else (p.get("sell_price") or p.get("list_price") or 0.0))
-        stock = p.get("stock_count")
-        in_stock = 1 if (p.get("in_stock") is True or p.get("in_stock") == 1 or (stock is not None and stock > 0)) else 0
-        curr_stock = stock if stock is not None else (1 if in_stock == 1 else 0)
+    # ---------------------------------------------------------
+    # 1. Sync Supplier API 1
+    # ---------------------------------------------------------
+    synced_ids_1 = []
+    try:
+        api1_key = await api_client.get_api_key()
+        if api1_key:
+            remote_1 = await api_client.get_products()
+            for p in remote_1:
+                p_id = p.get("id") or p.get("product_id")
+                if not p_id:
+                    continue
+                p_id = int(p_id)
+                synced_ids_1.append(p_id)
+                name = str(p.get("name", "Product")).strip()
+                price = float(p.get("unit_price") if p.get("unit_price") is not None else (p.get("sell_price") or p.get("list_price") or 0.0))
+                stock = p.get("stock_count")
+                in_stock = 1 if (p.get("in_stock") is True or p.get("in_stock") == 1 or (stock is not None and stock > 0)) else 0
+                curr_stock = stock if stock is not None else (1 if in_stock == 1 else 0)
 
-        db_prod = existing_products.get(p_id)
-        last_notified = db_prod.get("last_notified_stock", 0) if db_prod else 0
+                db_prod = existing_products.get(p_id)
+                last_notified = db_prod.get("last_notified_stock", 0) if db_prod else 0
 
-        # Only detect new additions after the first startup cycle has seeded the database
-        if _is_first_sync_done and existing_products:
-            if p_id not in existing_products and in_stock == 1 and curr_stock > 0:
-                # Brand new product added to shop
-                new_products.append({"id": p_id, "name": name, "sell_price": price, "stock_count": stock})
-                last_notified = curr_stock
-            elif p_id in existing_products:
-                # Stock increased (restocked)
-                if curr_stock > last_notified and in_stock == 1:
-                    added_cnt = curr_stock - last_notified
-                    restocked_products.append({
-                        "id": p_id,
-                        "name": name,
-                        "sell_price": price,
-                        "stock_count": stock,
-                        "added_count": added_cnt
-                    })
-                    last_notified = curr_stock
-        else:
-            # First sync cycle: Seed the last_notified baseline so current stock is not spammed
-            last_notified = max(last_notified, curr_stock)
+                if _is_first_sync_done and existing_products:
+                    if p_id not in existing_products and in_stock == 1 and curr_stock > 0:
+                        new_products.append({"id": p_id, "name": name, "sell_price": price, "stock_count": stock})
+                        last_notified = curr_stock
+                    elif p_id in existing_products:
+                        if curr_stock > last_notified and in_stock == 1:
+                            added_cnt = curr_stock - last_notified
+                            restocked_products.append({"id": p_id, "name": name, "sell_price": price, "stock_count": stock, "added_count": added_cnt})
+                            last_notified = curr_stock
+                else:
+                    last_notified = max(last_notified, curr_stock)
 
-        products_to_save.append({
-            "p_id": p_id,
-            "name": name,
-            "price": price,
-            "stock": stock,
-            "in_stock": in_stock,
-            "last_notified": last_notified
-        })
+                products_to_save.append({
+                    "p_id": p_id,
+                    "name": name,
+                    "price": price,
+                    "stock": stock,
+                    "in_stock": in_stock,
+                    "last_notified": last_notified,
+                    "api_source": "api1",
+                    "supplier_slug": str(p_id),
+                    "description": p.get("description", "")
+                })
+    except Exception as e:
+        logger.warning(f"Supplier API 1 sync warning: {e}")
 
+    # ---------------------------------------------------------
+    # 2. Sync Devine Store API 2
+    # ---------------------------------------------------------
+    synced_ids_2 = []
+    try:
+        devine_key = await devine_client.get_api_key()
+        if devine_key:
+            remote_2 = await devine_client.get_products()
+            for p in remote_2:
+                slug = p.get("id") or p.get("uuid")
+                if not slug:
+                    continue
+                p_id = slug_to_id(slug)
+                synced_ids_2.append(p_id)
+                raw_name = str(p.get("name", "Product")).strip()
+                price = float(p.get("price", 0.0))
+                stock = p.get("stock")
+                unlimited = bool(p.get("unlimited_stock"))
+                available = bool(p.get("available", True))
+                in_stock = 1 if (available and (unlimited or (stock is not None and stock > 0))) else 0
+                curr_stock = stock if stock is not None else (99 if unlimited else 0)
+
+                db_prod = existing_products.get(p_id)
+                last_notified = db_prod.get("last_notified_stock", 0) if db_prod else 0
+
+                if _is_first_sync_done and existing_products:
+                    if p_id not in existing_products and in_stock == 1 and curr_stock > 0:
+                        new_products.append({"id": p_id, "name": raw_name, "sell_price": price, "stock_count": stock})
+                        last_notified = curr_stock
+                    elif p_id in existing_products:
+                        if curr_stock > last_notified and in_stock == 1:
+                            added_cnt = curr_stock - last_notified
+                            restocked_products.append({"id": p_id, "name": raw_name, "sell_price": price, "stock_count": stock, "added_count": added_cnt})
+                            last_notified = curr_stock
+                else:
+                    last_notified = max(last_notified, curr_stock)
+
+                products_to_save.append({
+                    "p_id": p_id,
+                    "name": raw_name,
+                    "price": price,
+                    "stock": stock,
+                    "in_stock": in_stock,
+                    "last_notified": last_notified,
+                    "api_source": "devine",
+                    "supplier_slug": str(slug),
+                    "description": p.get("description", "")
+                })
+    except Exception as e:
+        logger.warning(f"Devine Store API 2 sync warning: {e}")
+
+    # ---------------------------------------------------------
     # Save to PostgreSQL / SQLite
+    # ---------------------------------------------------------
     if database.USE_POSTGRES:
         try:
             pool = await database.get_pg_pool()
             async with pool.acquire() as conn:
                 for item in products_to_save:
                     await conn.execute("""
-                        INSERT INTO products_synced (supplier_product_id, name, sell_price, stock_count, in_stock, is_enabled, last_notified_stock, last_synced)
-                        VALUES ($1, $2, $3, $4, $5, 1, $6, $7)
+                        INSERT INTO products_synced (supplier_product_id, name, sell_price, stock_count, in_stock, is_enabled, last_notified_stock, last_synced, api_source, supplier_slug, description)
+                        VALUES ($1, $2, $3, $4, $5, 1, $6, $7, $8, $9, $10)
                         ON CONFLICT(supplier_product_id) DO UPDATE SET
                             name = EXCLUDED.name,
                             sell_price = EXCLUDED.sell_price,
                             stock_count = EXCLUDED.stock_count,
                             in_stock = EXCLUDED.in_stock,
                             last_notified_stock = EXCLUDED.last_notified_stock,
-                            last_synced = EXCLUDED.last_synced
-                    """, item["p_id"], item["name"], item["price"], item["stock"], item["in_stock"], item["last_notified"], now_str)
+                            last_synced = EXCLUDED.last_synced,
+                            api_source = EXCLUDED.api_source,
+                            supplier_slug = EXCLUDED.supplier_slug,
+                            description = EXCLUDED.description
+                    """, item["p_id"], item["name"], item["price"], item["stock"], item["in_stock"], item["last_notified"], now_str, item["api_source"], item["supplier_slug"], item["description"])
 
-                if synced_ids:
-                    await conn.execute("UPDATE products_synced SET in_stock = 0 WHERE supplier_product_id != ALL($1)", synced_ids)
-                await conn.execute("INSERT INTO sync_history (synced_at, items_count, status) VALUES ($1, $2, 'success')", now_str, len(synced_ids))
+                if synced_ids_1:
+                    await conn.execute("UPDATE products_synced SET in_stock = 0 WHERE api_source = 'api1' AND supplier_product_id != ALL($1)", synced_ids_1)
+                if synced_ids_2:
+                    await conn.execute("UPDATE products_synced SET in_stock = 0 WHERE api_source = 'devine' AND supplier_product_id != ALL($1)", synced_ids_2)
+                
+                tot_synced = len(synced_ids_1) + len(synced_ids_2)
+                await conn.execute("INSERT INTO sync_history (synced_at, items_count, status) VALUES ($1, $2, 'success')", now_str, tot_synced)
         except Exception as e:
             logger.error(f"PG save synced products error: {e}")
     else:
         async with aiosqlite.connect(database.DB_PATH) as db:
             for item in products_to_save:
                 await db.execute("""
-                    INSERT INTO products_synced (supplier_product_id, name, sell_price, stock_count, in_stock, is_enabled, last_notified_stock, last_synced)
-                    VALUES (?, ?, ?, ?, ?, 1, ?, ?)
+                    INSERT INTO products_synced (supplier_product_id, name, sell_price, stock_count, in_stock, is_enabled, last_notified_stock, last_synced, api_source, supplier_slug, description)
+                    VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?)
                     ON CONFLICT(supplier_product_id) DO UPDATE SET
                         name = excluded.name,
                         sell_price = excluded.sell_price,
                         stock_count = excluded.stock_count,
                         in_stock = excluded.in_stock,
                         last_notified_stock = excluded.last_notified_stock,
-                        last_synced = excluded.last_synced
-                """, (item["p_id"], item["name"], item["price"], item["stock"], item["in_stock"], item["last_notified"], now_str))
+                        last_synced = excluded.last_synced,
+                        api_source = excluded.api_source,
+                        supplier_slug = excluded.supplier_slug,
+                        description = excluded.description
+                """, (item["p_id"], item["name"], item["price"], item["stock"], item["in_stock"], item["last_notified"], now_str, item["api_source"], item["supplier_slug"], item["description"]))
 
-            if synced_ids:
-                placeholders = ",".join("?" * len(synced_ids))
-                await db.execute(f"UPDATE products_synced SET in_stock = 0 WHERE supplier_product_id NOT IN ({placeholders})", synced_ids)
-            await db.execute("INSERT INTO sync_history (synced_at, items_count, status) VALUES (?, ?, 'success')", (now_str, len(synced_ids)))
+            if synced_ids_1:
+                p1 = ",".join("?" * len(synced_ids_1))
+                await db.execute(f"UPDATE products_synced SET in_stock = 0 WHERE api_source = 'api1' AND supplier_product_id NOT IN ({p1})", synced_ids_1)
+            if synced_ids_2:
+                p2 = ",".join("?" * len(synced_ids_2))
+                await db.execute(f"UPDATE products_synced SET in_stock = 0 WHERE api_source = 'devine' AND supplier_product_id NOT IN ({p2})", synced_ids_2)
+
+            tot_synced = len(synced_ids_1) + len(synced_ids_2)
+            await db.execute("INSERT INTO sync_history (synced_at, items_count, status) VALUES (?, ?, 'success')", (now_str, tot_synced))
             await db.commit()
 
-    logger.info(f"Catalog Sync Success: {len(synced_ids)} products synchronized.")
+    invalidate_catalog_cache()
     _is_first_sync_done = True
+    tot_synced = len(synced_ids_1) + len(synced_ids_2)
+    logger.info(f"Catalog Sync Success: {tot_synced} products synchronized (API 1: {len(synced_ids_1)}, Devine API 2: {len(synced_ids_2)}).")
 
     # Trigger announcement ONCE if new products or genuine restocks detected
     if bot and (new_products or restocked_products):
@@ -321,7 +380,9 @@ async def sync_catalog_now(api_client: Optional[ShopAPIClient] = None, bot = Non
 
     return {
         "status": "success",
-        "synced_count": len(synced_ids),
+        "synced_count": tot_synced,
+        "api1_count": len(synced_ids_1),
+        "api2_count": len(synced_ids_2),
         "new_count": len(new_products),
         "restocked_count": len(restocked_products)
     }
@@ -338,16 +399,18 @@ async def get_local_catalog(filter_gemini: Optional[bool] = None) -> List[Dict[s
     """Retrieve in-stock synced products from local DB with added profit margin."""
     import time
     global _CATALOG_CACHE, _CATALOG_CACHE_TS
-    cache_key = f"{filter_gemini}"
     now_ts = time.time()
-    if now_ts - _CATALOG_CACHE_TS < 15.0 and cache_key in _CATALOG_CACHE:
+    cache_key = f"gemini_{filter_gemini}"
+
+    # Return memory cache if fresh (< 3 seconds)
+    if _CATALOG_CACHE.get(cache_key) and (now_ts - _CATALOG_CACHE_TS) < 3.0:
         return _CATALOG_CACHE[cache_key]
 
     margins = await database.get_all_margins()
     default_margin = margins.get("default", 0.20)
 
     if filter_gemini is None:
-        setting_val = await database.get_setting("catalog_gemini_only", "1")
+        setting_val = await database.get_setting("catalog_gemini_only", "0")
         should_filter_gemini = (setting_val == "1")
     else:
         should_filter_gemini = filter_gemini
@@ -358,7 +421,7 @@ async def get_local_catalog(filter_gemini: Optional[bool] = None) -> List[Dict[s
             pool = await database.get_pg_pool()
             async with pool.acquire() as conn:
                 res = await conn.fetch("""
-                    SELECT supplier_product_id as id, supplier_product_id as product_id, name, sell_price as supplier_price, stock_count, in_stock
+                    SELECT supplier_product_id as id, supplier_product_id as product_id, name, sell_price as supplier_price, stock_count, in_stock, COALESCE(api_source, 'api1') as api_source, supplier_slug, description
                     FROM products_synced
                     WHERE in_stock = 1 AND is_enabled = 1
                     ORDER BY sell_price ASC
@@ -370,7 +433,7 @@ async def get_local_catalog(filter_gemini: Optional[bool] = None) -> List[Dict[s
         async with aiosqlite.connect(database.DB_PATH) as db:
             db.row_factory = aiosqlite.Row
             async with db.execute("""
-                SELECT supplier_product_id as id, supplier_product_id as product_id, name, sell_price as supplier_price, stock_count, in_stock
+                SELECT supplier_product_id as id, supplier_product_id as product_id, name, sell_price as supplier_price, stock_count, in_stock, COALESCE(api_source, 'api1') as api_source, supplier_slug, description
                 FROM products_synced
                 WHERE in_stock = 1 AND is_enabled = 1
                 ORDER BY sell_price ASC
@@ -390,6 +453,8 @@ async def get_local_catalog(filter_gemini: Optional[bool] = None) -> List[Dict[s
         p_dict["margin"] = margin
         p_dict["supplier_price"] = supplier_price
         p_dict["is_custom"] = False
+        p_dict["api_source"] = p_dict.get("api_source", "api1")
+        p_dict["supplier_slug"] = p_dict.get("supplier_slug")
         api_products.append(p_dict)
 
     custom_products_list = []
@@ -411,7 +476,8 @@ async def get_local_catalog(filter_gemini: Optional[bool] = None) -> List[Dict[s
                     "stock_count": stock_cnt,
                     "in_stock": 1,
                     "is_custom": True,
-                    "custom_id": c_id
+                    "custom_id": c_id,
+                    "api_source": "custom"
                 })
     except Exception as e:
         logger.error(f"Error merging custom products in catalog: {e}")
@@ -454,7 +520,7 @@ async def get_gemini_products() -> List[Dict[str, Any]]:
             pool = await database.get_pg_pool()
             async with pool.acquire() as conn:
                 res = await conn.fetch("""
-                    SELECT supplier_product_id as id, supplier_product_id as product_id, name, sell_price as supplier_price, stock_count, in_stock
+                    SELECT supplier_product_id as id, supplier_product_id as product_id, name, sell_price as supplier_price, stock_count, in_stock, COALESCE(api_source, 'api1') as api_source, supplier_slug
                     FROM products_synced
                     WHERE LOWER(name) LIKE '%gemini%'
                     ORDER BY sell_price ASC
@@ -466,7 +532,7 @@ async def get_gemini_products() -> List[Dict[str, Any]]:
         async with aiosqlite.connect(database.DB_PATH) as db:
             db.row_factory = aiosqlite.Row
             async with db.execute("""
-                SELECT supplier_product_id as id, supplier_product_id as product_id, name, sell_price as supplier_price, stock_count, in_stock
+                SELECT supplier_product_id as id, supplier_product_id as product_id, name, sell_price as supplier_price, stock_count, in_stock, COALESCE(api_source, 'api1') as api_source, supplier_slug
                 FROM products_synced
                 WHERE LOWER(name) LIKE '%gemini%'
                 ORDER BY sell_price ASC
@@ -483,6 +549,8 @@ async def get_gemini_products() -> List[Dict[str, Any]]:
         p_dict["sell_price"] = round(supplier_price + margin, 2)
         p_dict["margin"] = margin
         p_dict["supplier_price"] = supplier_price
+        p_dict["api_source"] = p_dict.get("api_source", "api1")
+        p_dict["supplier_slug"] = p_dict.get("supplier_slug")
         products.append(p_dict)
     return products
 
@@ -512,7 +580,8 @@ async def get_local_product(product_id: int) -> Optional[Dict[str, Any]]:
             "stock_count": stock_cnt,
             "in_stock": 1 if stock_cnt > 0 else 0,
             "is_custom": True,
-            "custom_id": c_id
+            "custom_id": c_id,
+            "api_source": "custom"
         }
 
     margins = await database.get_all_margins()
@@ -526,7 +595,7 @@ async def get_local_product(product_id: int) -> Optional[Dict[str, Any]]:
             pool = await database.get_pg_pool()
             async with pool.acquire() as conn:
                 r = await conn.fetchrow("""
-                    SELECT supplier_product_id as id, supplier_product_id as product_id, name, sell_price as supplier_price, stock_count, in_stock
+                    SELECT supplier_product_id as id, supplier_product_id as product_id, name, sell_price as supplier_price, stock_count, in_stock, COALESCE(api_source, 'api1') as api_source, supplier_slug, description
                     FROM products_synced
                     WHERE supplier_product_id = $1
                 """, int(product_id))
@@ -538,7 +607,7 @@ async def get_local_product(product_id: int) -> Optional[Dict[str, Any]]:
         async with aiosqlite.connect(database.DB_PATH) as db:
             db.row_factory = aiosqlite.Row
             async with db.execute("""
-                SELECT supplier_product_id as id, supplier_product_id as product_id, name, sell_price as supplier_price, stock_count, in_stock
+                SELECT supplier_product_id as id, supplier_product_id as product_id, name, sell_price as supplier_price, stock_count, in_stock, COALESCE(api_source, 'api1') as api_source, supplier_slug, description
                 FROM products_synced
                 WHERE supplier_product_id = ?
             """, (int(product_id),)) as cursor:
@@ -553,14 +622,27 @@ async def get_local_product(product_id: int) -> Optional[Dict[str, Any]]:
     p_dict["sell_price"] = round(supplier_price + margin, 2)
     p_dict["margin"] = margin
     p_dict["supplier_price"] = supplier_price
+    p_dict["is_custom"] = False
+    p_dict["api_source"] = p_dict.get("api_source", "api1")
+    p_dict["supplier_slug"] = p_dict.get("supplier_slug")
     return p_dict
 
-async def start_periodic_catalog_sync(api_client: ShopAPIClient, bot = None, interval_seconds: int = 120):
-    """Background task to sync product catalog periodically and notify users ONCE when stock is added."""
+async def start_periodic_catalog_sync(
+    api_client: Optional[ShopAPIClient] = None,
+    devine_client: Optional[DevineAPIClient] = None,
+    bot = None,
+    interval_seconds: int = 120
+):
+    """Background task to sync product catalog periodically from both suppliers and notify users ONCE when stock is added."""
+    if api_client is None:
+        api_client = ShopAPIClient()
+    if devine_client is None:
+        devine_client = DevineAPIClient()
+
     logger.info(f"Starting periodic product sync worker (interval: {interval_seconds}s)...")
     while True:
         try:
-            await sync_catalog_now(api_client, bot=bot)
+            await sync_catalog_now(api_client, devine_client, bot=bot)
         except Exception as e:
             logger.error(f"Error in catalog sync loop: {e}")
         await asyncio.sleep(interval_seconds)
