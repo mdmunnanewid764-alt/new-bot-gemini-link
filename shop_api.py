@@ -15,16 +15,25 @@ class ShopAPIError(Exception):
         self.status_code = status_code
         self.data = data or {}
 
-_shared_client: Optional[httpx.AsyncClient] = None
+import asyncio
+_shared_clients: Dict[int, httpx.AsyncClient] = {}
 
 def get_shared_http_client() -> httpx.AsyncClient:
-    global _shared_client
-    if _shared_client is None or _shared_client.is_closed:
-        _shared_client = httpx.AsyncClient(
+    global _shared_clients
+    try:
+        loop = asyncio.get_running_loop()
+        loop_id = id(loop)
+    except RuntimeError:
+        loop_id = 0
+
+    client = _shared_clients.get(loop_id)
+    if client is None or client.is_closed:
+        client = httpx.AsyncClient(
             timeout=15.0,
             limits=httpx.Limits(max_keepalive_connections=30, max_connections=100, keepalive_expiry=60.0)
         )
-    return _shared_client
+        _shared_clients[loop_id] = client
+    return client
 
 class ShopAPIClient:
     def __init__(self, base_url: Optional[str] = None):
