@@ -204,7 +204,7 @@ async def broadcast_group_order(bot, buyer_name: str, username: str, user_id: in
             bot_user = "NexvoraGeminiShopebot"
 
         btn = InlineKeyboardMarkup([
-            [InlineKeyboardButton("🛒 Open Bot / Buy Now 🚀", url=f"https://t.me/{bot_user}?start=group_order")]
+            [InlineKeyboardButton("🛒 Open Bot / Buy Now 🚀", url=f"https://t.me/{bot_user}?start=group_order", style="success")]
         ])
         await bot.send_message(chat_id=grp_id, text=msg, parse_mode=ParseMode.MARKDOWN, reply_markup=btn)
     except Exception as e:
@@ -232,7 +232,7 @@ async def broadcast_group_deposit(bot, user_name: str, username: str, user_id: i
             bot_user = "NexvoraGeminiShopebot"
 
         btn = InlineKeyboardMarkup([
-            [InlineKeyboardButton("🛒 Open Bot / Deposit 🚀", url=f"https://t.me/{bot_user}?start=group_deposit")]
+            [InlineKeyboardButton("🛒 Open Bot / Deposit 🚀", url=f"https://t.me/{bot_user}?start=group_deposit", style="success")]
         ])
         await bot.send_message(chat_id=grp_id, text=msg, parse_mode=ParseMode.MARKDOWN, reply_markup=btn)
     except Exception as e:
@@ -313,9 +313,9 @@ async def show_force_join_screen(update_or_query, context: ContextTypes.DEFAULT_
     lang = await database.get_user_language(user_id)
     text = t("force_join_msg", lang)
     buttons = [
-        [InlineKeyboardButton(t("btn_join_group", lang), url="https://t.me/bdhitlog")],
-        [InlineKeyboardButton(t("btn_verify_join", lang), callback_data="check_group_join")],
-        [InlineKeyboardButton(t("btn_language", lang), callback_data="nav_language")]
+        [InlineKeyboardButton(t("btn_join_group", lang), url="https://t.me/bdhitlog", style="primary")],
+        [InlineKeyboardButton(t("btn_verify_join", lang), callback_data="check_group_join", style="success")],
+        [InlineKeyboardButton(t("btn_language", lang), callback_data="nav_language", style="primary")]
     ]
     markup = InlineKeyboardMarkup(buttons)
     if hasattr(update_or_query, "edit_message_text"):
@@ -399,7 +399,7 @@ async def show_product_detail_direct(update_or_query, context: ContextTypes.DEFA
         p = await catalog_sync.get_local_product(prod_id)
         if not p:
             msg = "⚠️ Product not found or out of stock."
-            kb = InlineKeyboardMarkup([[InlineKeyboardButton(t("btn_back_catalog", lang), callback_data="nav_products")]])
+            kb = InlineKeyboardMarkup([[InlineKeyboardButton(t("btn_back_catalog", lang), callback_data="nav_products", style="danger")]])
             if hasattr(update_or_query, "edit_message_text"):
                 await update_or_query.edit_message_text(msg, reply_markup=kb)
             elif hasattr(update_or_query, "message") and update_or_query.message:
@@ -421,10 +421,10 @@ async def show_product_detail_direct(update_or_query, context: ContextTypes.DEFA
         )
 
         buttons = [
-            [InlineKeyboardButton(t("btn_buy_now", lang), callback_data=f"qty_{prod_id}_1")],
+            [InlineKeyboardButton(t("btn_buy_now", lang), callback_data=f"qty_{prod_id}_1", style="success")],
             [
-                InlineKeyboardButton(t("btn_back_catalog", lang), callback_data="nav_products"),
-                InlineKeyboardButton(t("btn_back_main", lang), callback_data="nav_main")
+                InlineKeyboardButton(t("btn_back_catalog", lang), callback_data="nav_products", style="danger"),
+                InlineKeyboardButton(t("btn_back_main", lang), callback_data="nav_main", style="danger")
             ]
         ]
         if hasattr(update_or_query, "edit_message_text"):
@@ -481,8 +481,8 @@ async def show_withdraw_menu(query, context: ContextTypes.DEFAULT_TYPE):
         "⚡ _This feature is currently under active development and will be available soon._"
     )
     buttons = [
-        [InlineKeyboardButton("💬 Support", url=f"tg://user?id={ADMIN_ID}")],
-        [InlineKeyboardButton("🔙 Back to Main Menu", callback_data="nav_main")]
+        [InlineKeyboardButton("💬 Support", url=f"tg://user?id={ADMIN_ID}", style="success")],
+        [InlineKeyboardButton("🔙 Back to Main Menu", callback_data="nav_main", style="danger")]
     ]
     await query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(buttons))
 
@@ -592,13 +592,13 @@ async def show_products_list(query, context: ContextTypes.DEFAULT_TYPE, page: in
     except Exception as e:
         logger.error(f"Error fetching local products: {e}")
         text = "❌ Failed to fetch products. Please try again later."
-        keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to Main Menu", callback_data="nav_main")]])
+        keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to Main Menu", callback_data="nav_main", style="danger")]])
         await query.edit_message_text(text, reply_markup=keyboard)
         return
 
     if not products:
         text = "📦 *Product Catalog*\n\nNo products are currently in stock or available."
-        keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to Main Menu", callback_data="nav_main")]])
+        keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to Main Menu", callback_data="nav_main", style="danger")]])
         await query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=keyboard)
         return
 
@@ -752,7 +752,7 @@ async def handle_quantity_selector(update: Update, context: ContextTypes.DEFAULT
 
     except Exception as e:
         logger.error(f"Quantity selector error: {e}")
-        await query.edit_message_text("❌ Failed to update quantity.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="nav_products")]]))
+        await query.edit_message_text("❌ Failed to update quantity.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="nav_products", style="danger")]]))
 
 async def handle_buy_checkout(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -765,7 +765,7 @@ async def handle_buy_checkout(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     p = await catalog_sync.get_local_product(prod_id)
     if not p:
-        await query.edit_message_text("⚠️ Product not found or unavailable.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to Catalog", callback_data="nav_products")]]))
+        await query.edit_message_text("⚠️ Product not found or unavailable.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to Catalog", callback_data="nav_products", style="danger")]]))
         return
 
     unit_price = float(p.get("sell_price", 0.0))
@@ -781,8 +781,8 @@ async def handle_buy_checkout(update: Update, context: ContextTypes.DEFAULT_TYPE
             "Please contact Administrator Support to complete and activate your order:"
         )
         buttons = [
-            [InlineKeyboardButton("💬 Contact Admin Support", url=f"tg://user?id={ADMIN_ID}")],
-            [InlineKeyboardButton("🏠 Main Menu", callback_data="nav_main")]
+            [InlineKeyboardButton("💬 Contact Admin Support", url=f"tg://user?id={ADMIN_ID}", style="success")],
+            [InlineKeyboardButton("🏠 Main Menu", callback_data="nav_main", style="danger")]
         ]
         await query.edit_message_text(blocked_notice, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(buttons))
 
@@ -818,8 +818,8 @@ async def handle_buy_checkout(update: Update, context: ContextTypes.DEFAULT_TYPE
             "Please click **Deposit Funds** below to top up your account balance!"
         )
         buttons = [
-            [InlineKeyboardButton("💰 Deposit Funds", callback_data="nav_deposit")],
-            [InlineKeyboardButton("🔙 Back to Catalog", callback_data="nav_products")]
+            [InlineKeyboardButton("💰 Deposit Funds", callback_data="nav_deposit", style="primary")],
+            [InlineKeyboardButton("🔙 Back to Catalog", callback_data="nav_products", style="danger")]
         ]
         await query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(buttons))
         return
@@ -833,13 +833,13 @@ async def handle_buy_checkout(update: Update, context: ContextTypes.DEFAULT_TYPE
             await query.edit_message_text(
                 f"⚠️ *Out of Stock*\n\nSorry, `{prod_name}` does not have enough stock available right now.",
                 parse_mode=ParseMode.MARKDOWN,
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to Products", callback_data="nav_products")]])
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to Products", callback_data="nav_products", style="danger")]])
             )
             return
 
         deducted = await database.deduct_user_balance(user.id, total_price)
         if not deducted:
-            await query.edit_message_text("❌ Balance deduction failed.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="nav_products")]]))
+            await query.edit_message_text("❌ Balance deduction failed.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="nav_products", style="danger")]]))
             return
 
         order_id = int(time.time())
@@ -861,7 +861,7 @@ async def handle_buy_checkout(update: Update, context: ContextTypes.DEFAULT_TYPE
         # Deduct user balance
         deducted = await database.deduct_user_balance(user.id, total_price)
         if not deducted:
-            await query.edit_message_text("❌ Balance deduction failed.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="nav_products")]]))
+            await query.edit_message_text("❌ Balance deduction failed.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="nav_products", style="danger")]]))
             return
 
         idempotency_key = f"tg-{user.id}-{prod_id}-{int(time.time())}"
@@ -898,7 +898,7 @@ async def handle_buy_checkout(update: Update, context: ContextTypes.DEFAULT_TYPE
             await query.edit_message_text(
                 f"❌ *Order Failed:*\n`{e}`\n\nYour balance has been refunded.",
                 parse_mode=ParseMode.MARKDOWN,
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to Products", callback_data="nav_products")]])
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to Products", callback_data="nav_products", style="danger")]])
             )
             return
 
@@ -930,8 +930,8 @@ async def handle_buy_checkout(update: Update, context: ContextTypes.DEFAULT_TYPE
     )
 
     buttons = [
-        [InlineKeyboardButton("📜 View My Orders", callback_data="nav_orders")],
-        [InlineKeyboardButton("🛒 Continue Shopping", callback_data="nav_products")]
+        [InlineKeyboardButton("📜 View My Orders", callback_data="nav_orders", style="primary")],
+        [InlineKeyboardButton("🛒 Continue Shopping", callback_data="nav_products", style="success")]
     ]
 
     await query.edit_message_text(success_text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(buttons))
@@ -1057,9 +1057,9 @@ async def show_user_api_key_dashboard(query, context: ContextTypes.DEFAULT_TYPE)
             "👉 _You have not generated an API key yet. Click below to generate your unique key:_"
         )
         buttons = [
-            [InlineKeyboardButton("✨ Generate API Key", callback_data="nav_api_rotate")],
-            [InlineKeyboardButton("📖 API Documentation", callback_data="nav_api_docs")],
-            [InlineKeyboardButton("🔙 Back to Account", callback_data="nav_account")]
+            [InlineKeyboardButton("✨ Generate API Key", callback_data="nav_api_rotate", style="primary")],
+            [InlineKeyboardButton("📖 API Documentation", callback_data="nav_api_docs", style="primary")],
+            [InlineKeyboardButton("🔙 Back to Account", callback_data="nav_account", style="danger")]
         ]
     else:
         api_key = key_info.get("api_key", "")
@@ -1083,14 +1083,14 @@ async def show_user_api_key_dashboard(query, context: ContextTypes.DEFAULT_TYPE)
         docs_url = f"{web_url}/shop-api/docs"
         buttons = [
             [
-                InlineKeyboardButton("🔄 Rotate / Reset Key", callback_data="nav_api_rotate"),
-                InlineKeyboardButton(toggle_label, callback_data="nav_api_toggle")
+                InlineKeyboardButton("🔄 Rotate / Reset Key", callback_data="nav_api_rotate", style="primary"),
+                InlineKeyboardButton(toggle_label, callback_data="nav_api_toggle", style="primary")
             ],
             [
-                InlineKeyboardButton("🌐 Web Docs Portal", url=docs_url),
-                InlineKeyboardButton("📖 In-Bot Docs", callback_data="nav_api_docs")
+                InlineKeyboardButton("🌐 Web Docs Portal", url=docs_url, style="primary"),
+                InlineKeyboardButton("📖 In-Bot Docs", callback_data="nav_api_docs", style="primary")
             ],
-            [InlineKeyboardButton("🔙 Back to Account", callback_data="nav_account")]
+            [InlineKeyboardButton("🔙 Back to Account", callback_data="nav_account", style="danger")]
         ]
 
     await query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(buttons))
@@ -1139,9 +1139,9 @@ async def handle_user_api_docs_callback(query, context: ContextTypes.DEFAULT_TYP
         "⚡ _Delivered credentials are automatically returned in JSON response!_"
     )
     buttons = [
-        [InlineKeyboardButton("🌐 Open Web Documentation", url=docs_url)],
-        [InlineKeyboardButton("🔑 Back to API Key", callback_data="nav_user_api_key")],
-        [InlineKeyboardButton("🔙 Back to Account", callback_data="nav_account")]
+        [InlineKeyboardButton("🌐 Open Web Documentation", url=docs_url, style="primary")],
+        [InlineKeyboardButton("🔑 Back to API Key", callback_data="nav_user_api_key", style="danger")],
+        [InlineKeyboardButton("🔙 Back to Account", callback_data="nav_account", style="danger")]
     ]
     await query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(buttons))
 
@@ -1303,8 +1303,8 @@ async def show_help(query, context: ContextTypes.DEFAULT_TYPE):
     lang = await database.get_user_language(user_id)
     text = t("support", lang)
     buttons = [
-        [InlineKeyboardButton("💬 Admin Support", url=f"tg://user?id={ADMIN_ID}")],
-        [InlineKeyboardButton(t("btn_back_main", lang), callback_data="nav_main")]
+        [InlineKeyboardButton("💬 Admin Support", url=f"tg://user?id={ADMIN_ID}", style="success")],
+        [InlineKeyboardButton(t("btn_back_main", lang), callback_data="nav_main", style="danger")]
     ]
     await query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(buttons))
 
@@ -1383,48 +1383,48 @@ async def show_admin_panel(update_or_query, context: ContextTypes.DEFAULT_TYPE):
 
     buttons = [
         [
-            InlineKeyboardButton("💰 Shop API Balance", callback_data="admin_balance"),
-            InlineKeyboardButton("🔑 Shop API Key", callback_data="admin_key"),
+            InlineKeyboardButton("💰 Shop API Balance", callback_data="admin_balance", style="primary"),
+            InlineKeyboardButton("🔑 Shop API Key", callback_data="admin_key", style="primary"),
         ],
         [
-            InlineKeyboardButton("🟡 Binance Live Balance", callback_data="admin_binance_balance"),
-            InlineKeyboardButton("🟡 Binance Live Deposits", callback_data="admin_binance_deposits"),
+            InlineKeyboardButton("🟡 Binance Live Balance", callback_data="admin_binance_balance", style="primary"),
+            InlineKeyboardButton("🟡 Binance Live Deposits", callback_data="admin_binance_deposits", style="primary"),
         ],
         [
-            InlineKeyboardButton("🔐 Binance API Keys", callback_data="admin_binance_keys"),
-            InlineKeyboardButton("📦 In-House Products", callback_data="admin_custom_prods"),
+            InlineKeyboardButton("🔐 Binance API Keys", callback_data="admin_binance_keys", style="primary"),
+            InlineKeyboardButton("📦 In-House Products", callback_data="admin_custom_prods", style="primary"),
         ],
         [
-            InlineKeyboardButton("💎 Pricing & Profit", callback_data="admin_margins"),
-            InlineKeyboardButton("📌 Pin Product (Top)", callback_data="admin_pin_products"),
+            InlineKeyboardButton("💎 Pricing & Profit", callback_data="admin_margins", style="primary"),
+            InlineKeyboardButton("📌 Pin Product (Top)", callback_data="admin_pin_products", style="primary"),
         ],
         [
-            InlineKeyboardButton("🔘 Hide / Show Products", callback_data="admin_manage_api_prods"),
-            InlineKeyboardButton(toggle_btn_text, callback_data="admin_toggle_catalog_filter"),
+            InlineKeyboardButton("🔘 Hide / Show Products", callback_data="admin_manage_api_prods", style="primary"),
+            InlineKeyboardButton(toggle_btn_text, callback_data="admin_toggle_catalog_filter", style="primary"),
         ],
         [
-            InlineKeyboardButton("📍 Deposit Wallets", callback_data="admin_wallets"),
-            InlineKeyboardButton("💸 Balance Manager", callback_data="admin_manage_balance"),
+            InlineKeyboardButton("📍 Deposit Wallets", callback_data="admin_wallets", style="primary"),
+            InlineKeyboardButton("💸 Balance Manager", callback_data="admin_manage_balance", style="primary"),
         ],
         [
-            InlineKeyboardButton("📋 Pending Deposits", callback_data="admin_deposits"),
-            InlineKeyboardButton("📜 All Deposits History", callback_data="admin_all_deposits"),
+            InlineKeyboardButton("📋 Pending Deposits", callback_data="admin_deposits", style="primary"),
+            InlineKeyboardButton("📜 All Deposits History", callback_data="admin_all_deposits", style="primary"),
         ],
         [
-            InlineKeyboardButton("👥 Deposited Users", callback_data="admin_deposited_users"),
-            InlineKeyboardButton("🚫 Blocked Buyers", callback_data="admin_blocked_buyers"),
+            InlineKeyboardButton("👥 Deposited Users", callback_data="admin_deposited_users", style="primary"),
+            InlineKeyboardButton("🚫 Blocked Buyers", callback_data="admin_blocked_buyers", style="danger"),
         ],
         [
-            InlineKeyboardButton("📢 Broadcast Message", callback_data="admin_broadcast"),
-            InlineKeyboardButton("🔥 Price Drop Alert", callback_data="admin_pricedrop_start"),
+            InlineKeyboardButton("📢 Broadcast Message", callback_data="admin_broadcast", style="primary"),
+            InlineKeyboardButton("🔥 Price Drop Alert", callback_data="admin_pricedrop_start", style="primary"),
         ],
         [
-            InlineKeyboardButton("👨‍💼 Manage Assistants", callback_data="admin_manage_assistants"),
-            InlineKeyboardButton("🔄 Sync Products", callback_data="admin_sync"),
+            InlineKeyboardButton("👨‍💼 Manage Assistants", callback_data="admin_manage_assistants", style="primary"),
+            InlineKeyboardButton("🔄 Sync Products", callback_data="admin_sync", style="primary"),
         ],
         [
-            InlineKeyboardButton("💾 Download Backup", callback_data="admin_backup"),
-            InlineKeyboardButton("🏠 Main Menu", callback_data="nav_main"),
+            InlineKeyboardButton("💾 Download Backup", callback_data="admin_backup", style="primary"),
+            InlineKeyboardButton("🏠 Main Menu", callback_data="nav_main", style="danger"),
         ],
     ]
     markup = InlineKeyboardMarkup(buttons)
@@ -1445,18 +1445,18 @@ async def handle_admin_manage_balance_callback(query, context: ContextTypes.DEFA
     )
     buttons = [
         [
-            InlineKeyboardButton("➕ Add Balance", callback_data="admin_addbalance"),
-            InlineKeyboardButton("➖ Deduct / Remove", callback_data="admin_deductbalance"),
+            InlineKeyboardButton("➕ Add Balance", callback_data="admin_addbalance", style="success"),
+            InlineKeyboardButton("➖ Deduct / Remove", callback_data="admin_deductbalance", style="danger"),
         ],
         [
-            InlineKeyboardButton("✏️ Set Exact Balance", callback_data="admin_setexactbalance"),
-            InlineKeyboardButton("🔍 Check User Info", callback_data="admin_checkbalance"),
+            InlineKeyboardButton("✏️ Set Exact Balance", callback_data="admin_setexactbalance", style="success"),
+            InlineKeyboardButton("🔍 Check User Info", callback_data="admin_checkbalance", style="primary"),
         ],
         [
-            InlineKeyboardButton("👥 Browse Users & Quick Edit", callback_data="admin_list_users"),
+            InlineKeyboardButton("👥 Browse Users & Quick Edit", callback_data="admin_list_users", style="primary"),
         ],
         [
-            InlineKeyboardButton("🔙 Admin Panel", callback_data="nav_admin")
+            InlineKeyboardButton("🔙 Admin Panel", callback_data="nav_admin", style="danger")
         ]
     ]
     await query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(buttons))
@@ -1466,7 +1466,7 @@ async def handle_admin_list_users_callback(query, context: ContextTypes.DEFAULT_
     if not users:
         await query.edit_message_text(
             "👥 *No registered users found.*",
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Balance Manager", callback_data="admin_manage_balance")]])
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Balance Manager", callback_data="admin_manage_balance", style="danger")]])
         )
         return
 
@@ -1476,9 +1476,9 @@ async def handle_admin_list_users_callback(query, context: ContextTypes.DEFAULT_
         u_name = f"@{u['username']}" if u.get("username") else (u.get("first_name") or f"User {u['user_id']}")
         bal = float(u.get("balance", 0.0))
         btn_label = f"{u_name} (${bal:.2f})"
-        buttons.append([InlineKeyboardButton(btn_label, callback_data=f"admin_usr_{u['user_id']}")])
+        buttons.append([InlineKeyboardButton(btn_label, callback_data=f"admin_usr_{u['user_id']}", style="primary")])
 
-    buttons.append([InlineKeyboardButton("🔙 Balance Manager", callback_data="admin_manage_balance")])
+    buttons.append([InlineKeyboardButton("🔙 Balance Manager", callback_data="admin_manage_balance", style="danger")])
     await query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(buttons))
 
 async def handle_admin_user_detail_callback(query, context: ContextTypes.DEFAULT_TYPE, target_uid: int):
@@ -1507,22 +1507,22 @@ async def handle_admin_user_detail_callback(query, context: ContextTypes.DEFAULT
 
     buttons = [
         [
-            InlineKeyboardButton("➕ Add $1", callback_data=f"admin_uadd_{target_uid}_1"),
-            InlineKeyboardButton("➕ Add $5", callback_data=f"admin_uadd_{target_uid}_5"),
-            InlineKeyboardButton("➕ Add $10", callback_data=f"admin_uadd_{target_uid}_10"),
+            InlineKeyboardButton("➕ Add $1", callback_data=f"admin_uadd_{target_uid}_1", style="success"),
+            InlineKeyboardButton("➕ Add $5", callback_data=f"admin_uadd_{target_uid}_5", style="success"),
+            InlineKeyboardButton("➕ Add $10", callback_data=f"admin_uadd_{target_uid}_10", style="success"),
         ],
         [
-            InlineKeyboardButton("➖ Deduct $1", callback_data=f"admin_uded_{target_uid}_1"),
-            InlineKeyboardButton("➖ Deduct $5", callback_data=f"admin_uded_{target_uid}_5"),
-            InlineKeyboardButton("➖ Deduct $10", callback_data=f"admin_uded_{target_uid}_10"),
+            InlineKeyboardButton("➖ Deduct $1", callback_data=f"admin_uded_{target_uid}_1", style="primary"),
+            InlineKeyboardButton("➖ Deduct $5", callback_data=f"admin_uded_{target_uid}_5", style="primary"),
+            InlineKeyboardButton("➖ Deduct $10", callback_data=f"admin_uded_{target_uid}_10", style="primary"),
         ],
         [
-            InlineKeyboardButton("✏️ Set Custom Amount", callback_data=f"admin_uset_{target_uid}"),
-            InlineKeyboardButton(block_btn_text, callback_data=block_callback),
+            InlineKeyboardButton("✏️ Set Custom Amount", callback_data=f"admin_uset_{target_uid}", style="success"),
+            InlineKeyboardButton(block_btn_text, callback_data=block_callback, style="danger"),
         ],
         [
-            InlineKeyboardButton("👥 User List", callback_data="admin_list_users"),
-            InlineKeyboardButton("🔙 Balance Manager", callback_data="admin_manage_balance")
+            InlineKeyboardButton("👥 User List", callback_data="admin_list_users", style="primary"),
+            InlineKeyboardButton("🔙 Balance Manager", callback_data="admin_manage_balance", style="danger")
         ]
     ]
     await query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(buttons))
@@ -1546,16 +1546,16 @@ async def handle_admin_blocked_buyers_callback(query, context: ContextTypes.DEFA
             f"━━━━━━━━━━━━━━━━━━━\n"
         )
         buttons.append([
-            InlineKeyboardButton(f"🟢 Unblock {btn_label}", callback_data=f"admin_ubunblock_{u_id}"),
-            InlineKeyboardButton("⚙️ Profile", callback_data=f"admin_usr_{u_id}")
+            InlineKeyboardButton(f"🟢 Unblock {btn_label}", callback_data=f"admin_ubunblock_{u_id}", style="danger"),
+            InlineKeyboardButton("⚙️ Profile", callback_data=f"admin_usr_{u_id}", style="primary")
         ])
 
     if not blocked:
         text += "🟢 _No users are currently blocked from buying._\n\n"
 
     buttons.append([
-        InlineKeyboardButton("➕ Block a User", callback_data="admin_prompt_block_buyer"),
-        InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin")
+        InlineKeyboardButton("➕ Block a User", callback_data="admin_prompt_block_buyer", style="danger"),
+        InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin", style="danger")
     ])
     await query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(buttons))
 
@@ -1602,22 +1602,22 @@ async def handle_admin_custom_products_callback(update_or_query, context: Contex
             f"━━━━━━━━━━━━━━━━━━━\n"
         )
         row_btns = [
-            InlineKeyboardButton(f"➕ Add Stock (#{c_id})", callback_data=f"admin_addstock_menu_{c_id}"),
-            InlineKeyboardButton(f"👁️ View Stock", callback_data=f"admin_viewstock_{c_id}"),
+            InlineKeyboardButton(f"➕ Add Stock (#{c_id})", callback_data=f"admin_addstock_menu_{c_id}", style="success"),
+            InlineKeyboardButton(f"👁️ View Stock", callback_data=f"admin_viewstock_{c_id}", style="primary"),
         ]
         if is_super_admin(user_id):
-            row_btns.append(InlineKeyboardButton(f"🗑️ Delete", callback_data=f"admin_delcust_{c_id}"))
+            row_btns.append(InlineKeyboardButton(f"🗑️ Delete", callback_data=f"admin_delcust_{c_id}", style="danger"))
         buttons.append(row_btns)
 
     if not prods:
         text += "_No in-house products found for your account._\n\n"
 
-    nav_back = InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin") if is_super_admin(user_id) else InlineKeyboardButton("🏠 Main Menu", callback_data="nav_main")
+    nav_back = InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin", style="danger") if is_super_admin(user_id) else InlineKeyboardButton("🏠 Main Menu", callback_data="nav_main", style="danger")
     buttons.append([
-        InlineKeyboardButton("📦 Add Single Product (Step-by-Step)", callback_data="admin_add_single_step1"),
+        InlineKeyboardButton("📦 Add Single Product (Step-by-Step)", callback_data="admin_add_single_step1", style="success"),
     ])
     buttons.append([
-        InlineKeyboardButton("⚡ Quick Add (<Name> | <Price>)", callback_data="admin_prompt_add_cust_prod"),
+        InlineKeyboardButton("⚡ Quick Add (<Name> | <Price>)", callback_data="admin_prompt_add_cust_prod", style="success"),
         nav_back
     ])
 
@@ -1650,14 +1650,14 @@ async def handle_admin_manage_api_products_callback(update_or_query, context: Co
             f"   Status: `{status_icon}`\n"
             f"━━━━━━━━━━━━━━━━━━━\n"
         )
-        buttons.append([InlineKeyboardButton(btn_label, callback_data=f"admin_togprod_{p_id}")])
+        buttons.append([InlineKeyboardButton(btn_label, callback_data=f"admin_togprod_{p_id}", style="primary")])
 
     if not prods:
         text += "_No API products synchronized yet._\n\n"
 
     buttons.append([
-        InlineKeyboardButton("🔄 Refresh List", callback_data="admin_manage_api_prods"),
-        InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin")
+        InlineKeyboardButton("🔄 Refresh List", callback_data="admin_manage_api_prods", style="primary"),
+        InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin", style="danger")
     ])
 
     if hasattr(update_or_query, "edit_message_text"):
@@ -1698,7 +1698,7 @@ async def handle_admin_backup_callback(query, context: ContextTypes.DEFAULT_TYPE
         await query.message.reply_text(
             "✅ *Backup Files Sent Successfully!*\n\nAll your data is permanently saved on your local disk in `bot_data.db` and `backups/` folder.",
             parse_mode=ParseMode.MARKDOWN,
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin")]])
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin", style="danger")]])
         )
     except Exception as e:
         logger.error(f"Error exporting backup: {e}")
@@ -1728,17 +1728,17 @@ async def handle_admin_manage_assistants_callback(update_or_query, context: Cont
             f"   📅 Added: `{str(a.get('added_at', ''))[:19]}`\n"
             "━━━━━━━━━━━━━━━━━━━\n"
         )
-        buttons.append([InlineKeyboardButton(f"🗑️ Remove Assistant ({btn_label[:14]})", callback_data=f"admin_delasst_{u_id}")])
+        buttons.append([InlineKeyboardButton(f"🗑️ Remove Assistant ({btn_label[:14]})", callback_data=f"admin_delasst_{u_id}", style="danger")])
 
     if not assts:
         text += "🟢 _No assistants are currently active._\n\n"
 
     buttons.append([
-        InlineKeyboardButton("➕ Add Assistant", callback_data="admin_prompt_add_assistant"),
-        InlineKeyboardButton("🗑️ Remove Assistant", callback_data="admin_prompt_del_assistant"),
+        InlineKeyboardButton("➕ Add Assistant", callback_data="admin_prompt_add_assistant", style="success"),
+        InlineKeyboardButton("🗑️ Remove Assistant", callback_data="admin_prompt_del_assistant", style="danger"),
     ])
     buttons.append([
-        InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin")
+        InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin", style="danger")
     ])
 
     if hasattr(update_or_query, "edit_message_text"):
@@ -1758,8 +1758,8 @@ async def handle_admin_binance_balance_callback(query, context: ContextTypes.DEF
             "Please configure your Binance API Key and Secret Key below:"
         )
         buttons = [
-            [InlineKeyboardButton("🔐 Setup Binance Keys", callback_data="admin_binance_keys")],
-            [InlineKeyboardButton("🔙 Admin Panel", callback_data="nav_admin")]
+            [InlineKeyboardButton("🔐 Setup Binance Keys", callback_data="admin_binance_keys", style="primary")],
+            [InlineKeyboardButton("🔙 Admin Panel", callback_data="nav_admin", style="danger")]
         ]
         await query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(buttons))
         return
@@ -1797,12 +1797,12 @@ async def handle_admin_binance_balance_callback(query, context: ContextTypes.DEF
 
     buttons = [
         [
-            InlineKeyboardButton("🔄 Refresh Balance", callback_data="admin_binance_balance"),
-            InlineKeyboardButton("🟡 View Live Deposits", callback_data="admin_binance_deposits"),
+            InlineKeyboardButton("🔄 Refresh Balance", callback_data="admin_binance_balance", style="primary"),
+            InlineKeyboardButton("🟡 View Live Deposits", callback_data="admin_binance_deposits", style="primary"),
         ],
         [
-            InlineKeyboardButton("🔐 Edit API Keys", callback_data="admin_binance_keys"),
-            InlineKeyboardButton("🔙 Admin Panel", callback_data="nav_admin")
+            InlineKeyboardButton("🔐 Edit API Keys", callback_data="admin_binance_keys", style="primary"),
+            InlineKeyboardButton("🔙 Admin Panel", callback_data="nav_admin", style="danger")
         ]
     ]
     if hasattr(query, "edit_message_text"):
@@ -1824,14 +1824,14 @@ async def handle_admin_binance_keys_callback(query, context: ContextTypes.DEFAUL
 
     buttons = [
         [
-            InlineKeyboardButton("✏️ Set API Key", callback_data="admin_set_binance_key"),
-            InlineKeyboardButton("✏️ Set Secret Key", callback_data="admin_set_binance_secret"),
+            InlineKeyboardButton("✏️ Set API Key", callback_data="admin_set_binance_key", style="success"),
+            InlineKeyboardButton("✏️ Set Secret Key", callback_data="admin_set_binance_secret", style="success"),
         ],
         [
-            InlineKeyboardButton("⚡ Test Connection & Live Balance", callback_data="admin_binance_balance"),
+            InlineKeyboardButton("⚡ Test Connection & Live Balance", callback_data="admin_binance_balance", style="success"),
         ],
         [
-            InlineKeyboardButton("🔙 Admin Panel", callback_data="nav_admin")
+            InlineKeyboardButton("🔙 Admin Panel", callback_data="nav_admin", style="danger")
         ]
     ]
     await query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(buttons))
@@ -1860,9 +1860,9 @@ async def handle_admin_balance_callback(query, context: ContextTypes.DEFAULT_TYP
 
     buttons = [
         [
-            InlineKeyboardButton("🔄 Refresh", callback_data="admin_balance"),
-            InlineKeyboardButton("🔑 Change Key", callback_data="admin_setkey"),
-            InlineKeyboardButton("🔙 Admin Panel", callback_data="nav_admin")
+            InlineKeyboardButton("🔄 Refresh", callback_data="admin_balance", style="primary"),
+            InlineKeyboardButton("🔑 Change Key", callback_data="admin_setkey", style="primary"),
+            InlineKeyboardButton("🔙 Admin Panel", callback_data="nav_admin", style="danger")
         ]
     ]
     await query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(buttons))
@@ -1885,11 +1885,11 @@ async def handle_admin_stats_callback(query, context: ContextTypes.DEFAULT_TYPE)
     )
     buttons = [
         [
-            InlineKeyboardButton("🔄 Refresh", callback_data="admin_stats"),
-            InlineKeyboardButton("👥 Deposited Users", callback_data="admin_deposited_users")
+            InlineKeyboardButton("🔄 Refresh", callback_data="admin_stats", style="primary"),
+            InlineKeyboardButton("👥 Deposited Users", callback_data="admin_deposited_users", style="primary")
         ],
         [
-            InlineKeyboardButton("🔙 Admin Panel", callback_data="nav_admin")
+            InlineKeyboardButton("🔙 Admin Panel", callback_data="nav_admin", style="danger")
         ]
     ]
     if hasattr(query, "edit_message_text"):
@@ -1911,12 +1911,12 @@ async def handle_admin_wallets_callback(query, context: ContextTypes.DEFAULT_TYP
     )
     buttons = [
         [
-            InlineKeyboardButton("🟡 Edit BEP20", callback_data="admin_setwallet_BEP20"),
-            InlineKeyboardButton("🔴 Edit TRC20", callback_data="admin_setwallet_TRC20"),
+            InlineKeyboardButton("🟡 Edit BEP20", callback_data="admin_setwallet_BEP20", style="primary"),
+            InlineKeyboardButton("🔴 Edit TRC20", callback_data="admin_setwallet_TRC20", style="danger"),
         ],
         [
-            InlineKeyboardButton("🔵 Edit ERC20", callback_data="admin_setwallet_ERC20"),
-            InlineKeyboardButton("🔙 Admin Panel", callback_data="nav_admin"),
+            InlineKeyboardButton("🔵 Edit ERC20", callback_data="admin_setwallet_ERC20", style="primary"),
+            InlineKeyboardButton("🔙 Admin Panel", callback_data="nav_admin", style="danger"),
         ]
     ]
     await query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(buttons))
@@ -1933,7 +1933,7 @@ async def handle_admin_setwallet_callback(query, context: ContextTypes.DEFAULT_T
         f"Current: `{current}`\n\n"
         f"Send the new wallet address in your next message:",
         parse_mode=ParseMode.MARKDOWN,
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="admin_wallets")]])
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="admin_wallets", style="danger")]])
     )
 
 async def handle_admin_margins_callback(query, context: ContextTypes.DEFAULT_TYPE):
@@ -1970,7 +1970,7 @@ async def handle_admin_margins_callback(query, context: ContextTypes.DEFAULT_TYP
                 InlineKeyboardButton(
                     f"✏️ {name_btn} (+${margin:.2f} ➔ ${sell_p:.2f})",
                     callback_data=f"admin_editprodmargin_{p_id}"
-                )
+, style="success")
             ])
         text += "━━━━━━━━━━━━━━━━━━━\n"
     else:
@@ -1980,14 +1980,14 @@ async def handle_admin_margins_callback(query, context: ContextTypes.DEFAULT_TYP
     toggle_label = "💎 Store: Gemini Only (Switch)" if catalog_gemini_only else "🌐 Store: All Products (Switch)"
 
     buttons.append([
-        InlineKeyboardButton("🌐 Set Global Default Margin", callback_data="admin_setmargin_default"),
+        InlineKeyboardButton("🌐 Set Global Default Margin", callback_data="admin_setmargin_default", style="primary"),
     ])
     buttons.append([
-        InlineKeyboardButton(toggle_label, callback_data="admin_toggle_catalog_filter"),
-        InlineKeyboardButton("🔄 Sync Prices & Stock", callback_data="admin_sync_margins"),
+        InlineKeyboardButton(toggle_label, callback_data="admin_toggle_catalog_filter", style="primary"),
+        InlineKeyboardButton("🔄 Sync Prices & Stock", callback_data="admin_sync_margins", style="primary"),
     ])
     buttons.append([
-        InlineKeyboardButton("🔙 Admin Panel", callback_data="nav_admin"),
+        InlineKeyboardButton("🔙 Admin Panel", callback_data="nav_admin", style="danger"),
     ])
     await query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(buttons))
 
@@ -2025,27 +2025,27 @@ async def handle_admin_edit_product_margin_callback(query, context: ContextTypes
 
     buttons = [
         [
-            InlineKeyboardButton("+$0.10", callback_data=f"admin_setpmar_{prod_id}_0.10"),
-            InlineKeyboardButton("+$0.25", callback_data=f"admin_setpmar_{prod_id}_0.25"),
-            InlineKeyboardButton("+$0.50", callback_data=f"admin_setpmar_{prod_id}_0.50"),
-            InlineKeyboardButton("+$1.00", callback_data=f"admin_setpmar_{prod_id}_1.00"),
+            InlineKeyboardButton("+$0.10", callback_data=f"admin_setpmar_{prod_id}_0.10", style="primary"),
+            InlineKeyboardButton("+$0.25", callback_data=f"admin_setpmar_{prod_id}_0.25", style="primary"),
+            InlineKeyboardButton("+$0.50", callback_data=f"admin_setpmar_{prod_id}_0.50", style="primary"),
+            InlineKeyboardButton("+$1.00", callback_data=f"admin_setpmar_{prod_id}_1.00", style="primary"),
         ],
         [
-            InlineKeyboardButton("+$1.50", callback_data=f"admin_setpmar_{prod_id}_1.50"),
-            InlineKeyboardButton("+$2.00", callback_data=f"admin_setpmar_{prod_id}_2.00"),
-            InlineKeyboardButton("+$3.00", callback_data=f"admin_setpmar_{prod_id}_3.00"),
-            InlineKeyboardButton("+$5.00", callback_data=f"admin_setpmar_{prod_id}_5.00"),
+            InlineKeyboardButton("+$1.50", callback_data=f"admin_setpmar_{prod_id}_1.50", style="primary"),
+            InlineKeyboardButton("+$2.00", callback_data=f"admin_setpmar_{prod_id}_2.00", style="primary"),
+            InlineKeyboardButton("+$3.00", callback_data=f"admin_setpmar_{prod_id}_3.00", style="primary"),
+            InlineKeyboardButton("+$5.00", callback_data=f"admin_setpmar_{prod_id}_5.00", style="primary"),
         ],
         [
-            InlineKeyboardButton("✏️ Set Custom Profit ($)", callback_data=f"admin_prodcustommargin_{prod_id}"),
-            InlineKeyboardButton("🏷️ Set Selling Price ($)", callback_data=f"admin_prodcustomprice_{prod_id}"),
+            InlineKeyboardButton("✏️ Set Custom Profit ($)", callback_data=f"admin_prodcustommargin_{prod_id}", style="success"),
+            InlineKeyboardButton("🏷️ Set Selling Price ($)", callback_data=f"admin_prodcustomprice_{prod_id}", style="primary"),
         ],
         [
-            InlineKeyboardButton("🔄 Reset to Default Margin", callback_data=f"admin_resetprodmargin_{prod_id}"),
+            InlineKeyboardButton("🔄 Reset to Default Margin", callback_data=f"admin_resetprodmargin_{prod_id}", style="primary"),
         ],
         [
-            InlineKeyboardButton("📋 All Products List", callback_data="admin_margins"),
-            InlineKeyboardButton("🔙 Admin Panel", callback_data="nav_admin"),
+            InlineKeyboardButton("📋 All Products List", callback_data="admin_margins", style="primary"),
+            InlineKeyboardButton("🔙 Admin Panel", callback_data="nav_admin", style="danger"),
         ]
     ]
     await query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(buttons))
@@ -2066,11 +2066,11 @@ async def handle_admin_key_callback(query, context: ContextTypes.DEFAULT_TYPE):
     )
     buttons = [
         [
-            InlineKeyboardButton("✏️ Change API Key", callback_data="admin_setkey"),
-            InlineKeyboardButton("⚡ Test Connection", callback_data="admin_testkey"),
+            InlineKeyboardButton("✏️ Change API Key", callback_data="admin_setkey", style="success"),
+            InlineKeyboardButton("⚡ Test Connection", callback_data="admin_testkey", style="success"),
         ],
         [
-            InlineKeyboardButton("🔙 Admin Panel", callback_data="nav_admin"),
+            InlineKeyboardButton("🔙 Admin Panel", callback_data="nav_admin", style="danger"),
         ]
     ]
     await query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(buttons))
@@ -2099,8 +2099,8 @@ async def handle_admin_key_test_callback(query, context: ContextTypes.DEFAULT_TY
 
     buttons = [
         [
-            InlineKeyboardButton("✏️ Change API Key", callback_data="admin_setkey"),
-            InlineKeyboardButton("🔙 Admin Panel", callback_data="nav_admin")
+            InlineKeyboardButton("✏️ Change API Key", callback_data="admin_setkey", style="success"),
+            InlineKeyboardButton("🔙 Admin Panel", callback_data="nav_admin", style="danger")
         ]
     ]
     await query.edit_message_text(status_text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(buttons))
@@ -2135,11 +2135,11 @@ async def handle_admin_pin_products_callback(update_or_query, context: ContextTy
         is_pinned = (p_id in pinned_ids)
         rank_badge = f"📌 [Pinned #{pinned_ids.index(p_id)+1}]" if is_pinned else "⭐ Pin to Top"
         btn_label = f"{rank_badge} {p['name'][:22]} (${p['sell_price']:.2f})"
-        buttons.append([InlineKeyboardButton(btn_label, callback_data=f"admin_toggle_pin_{p_id}")])
+        buttons.append([InlineKeyboardButton(btn_label, callback_data=f"admin_toggle_pin_{p_id}", style="primary")])
     
     buttons.append([
-        InlineKeyboardButton("🔄 Refresh", callback_data="admin_pin_products"),
-        InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin")
+        InlineKeyboardButton("🔄 Refresh", callback_data="admin_pin_products", style="primary"),
+        InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin", style="danger")
     ])
     
     if query:
@@ -2168,8 +2168,8 @@ async def handle_admin_binance_deposits_callback(update_or_query, context: Conte
             "Check your Binance API Keys in the Admin Dashboard."
         )
         buttons = [
-            [InlineKeyboardButton("🔄 Retry", callback_data="admin_binance_deposits")],
-            [InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin")]
+            [InlineKeyboardButton("🔄 Retry", callback_data="admin_binance_deposits", style="primary")],
+            [InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin", style="danger")]
         ]
         if query:
             await safe_edit_message_text(query, text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(buttons))
@@ -2256,23 +2256,23 @@ async def handle_admin_binance_deposits_callback(update_or_query, context: Conte
             )
 
             if d.get("transferType") == 1 or "Off-chain" in tx:
-                buttons.append([InlineKeyboardButton(f"⚡ Binance Internal: +{amt:.2f} {coin}", url="https://www.binance.com/en/my/wallet/history/deposit-crypto")])
+                buttons.append([InlineKeyboardButton(f"⚡ Binance Internal: +{amt:.2f} {coin}", url="https://www.binance.com/en/my/wallet/history/deposit-crypto", style="success")])
             elif len(tx) > 20 and all(c in "0123456789abcdefABCDEFxX" for c in tx):
                 exp_url = get_explorer_url(net, tx)
-                buttons.append([InlineKeyboardButton(f"🔍 Explorer: +{amt:.2f} {coin} ({net})", url=exp_url)])
+                buttons.append([InlineKeyboardButton(f"🔍 Explorer: +{amt:.2f} {coin} ({net})", url=exp_url, style="primary")])
 
         text += "━━━━━━━━━━━━━━━━━━━\n"
 
         # Dedicated Unclaimed / Unverified button
         buttons.append([
-            InlineKeyboardButton(f"⚠️ আন-ভেরিফাইড পেমেন্ট ম্যানেজার ({len(unclaimed)} টি বাকি)", callback_data="admin_bmode_unclaimed")
+            InlineKeyboardButton(f"⚠️ আন-ভেরিফাইড পেমেন্ট ম্যানেজার ({len(unclaimed)} টি বাকি)", callback_data="admin_bmode_unclaimed", style="primary")
         ])
         buttons.append([
-            InlineKeyboardButton("🔄 Refresh Deposits", callback_data="admin_binance_deposits"),
-            InlineKeyboardButton("🟡 Live Balances", callback_data="admin_binance_balance"),
+            InlineKeyboardButton("🔄 Refresh Deposits", callback_data="admin_binance_deposits", style="primary"),
+            InlineKeyboardButton("🟡 Live Balances", callback_data="admin_binance_balance", style="primary"),
         ])
         buttons.append([
-            InlineKeyboardButton("🔙 Admin Panel", callback_data="nav_admin")
+            InlineKeyboardButton("🔙 Admin Panel", callback_data="nav_admin", style="danger")
         ])
 
     elif view_mode == "claimed":
@@ -2311,19 +2311,19 @@ async def handle_admin_binance_deposits_callback(update_or_query, context: Conte
         if total_pages > 1:
             nav_row = []
             if page > 1:
-                nav_row.append(InlineKeyboardButton("⬅️ Prev", callback_data=f"admin_bpage_claimed_{page-1}"))
-            nav_row.append(InlineKeyboardButton(f"📄 {page}/{total_pages}", callback_data="noop"))
+                nav_row.append(InlineKeyboardButton("⬅️ Prev", callback_data=f"admin_bpage_claimed_{page-1}", style="primary"))
+            nav_row.append(InlineKeyboardButton(f"📄 {page}/{total_pages}", callback_data="noop", style="primary"))
             if page < total_pages:
-                nav_row.append(InlineKeyboardButton("Next ➡️", callback_data=f"admin_bpage_claimed_{page+1}"))
+                nav_row.append(InlineKeyboardButton("Next ➡️", callback_data=f"admin_bpage_claimed_{page+1}", style="primary"))
             buttons.append(nav_row)
 
         buttons.append([
-            InlineKeyboardButton(f"⚠️ আন-ভেরিফাইড লিস্ট ({len(unclaimed)})", callback_data="admin_bmode_unclaimed"),
-            InlineKeyboardButton("🔙 লাইভ ফিড", callback_data="admin_bmode_live")
+            InlineKeyboardButton(f"⚠️ আন-ভেরিফাইড লিস্ট ({len(unclaimed)})", callback_data="admin_bmode_unclaimed", style="primary"),
+            InlineKeyboardButton("🔙 লাইভ ফিড", callback_data="admin_bmode_live", style="danger")
         ])
         buttons.append([
-            InlineKeyboardButton("🔄 Refresh", callback_data="admin_bmode_claimed"),
-            InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin")
+            InlineKeyboardButton("🔄 Refresh", callback_data="admin_bmode_claimed", style="primary"),
+            InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin", style="danger")
         ])
 
     else:
@@ -2366,27 +2366,27 @@ async def handle_admin_binance_deposits_callback(update_or_query, context: Conte
                     f"   📌 স্ট্যাটাস: ⚠️ _আনক্লেইমড_\n\n"
                 )
                 buttons.append([
-                    InlineKeyboardButton(f"🔒 Lock {ic}", callback_data=f"admin_ltx_{token}"),
-                    InlineKeyboardButton(f"👤 Credit {ic} (+${u['amount']:.2f})", callback_data=f"admin_ctx_{token}"),
+                    InlineKeyboardButton(f"🔒 Lock {ic}", callback_data=f"admin_ltx_{token}", style="danger"),
+                    InlineKeyboardButton(f"👤 Credit {ic} (+${u['amount']:.2f})", callback_data=f"admin_ctx_{token}", style="success"),
                 ])
 
         # Pagination
         if total_pages > 1:
             nav_row = []
             if page > 1:
-                nav_row.append(InlineKeyboardButton("⬅️ Prev", callback_data=f"admin_bpage_unclaimed_{page-1}"))
-            nav_row.append(InlineKeyboardButton(f"📄 {page}/{total_pages}", callback_data="noop"))
+                nav_row.append(InlineKeyboardButton("⬅️ Prev", callback_data=f"admin_bpage_unclaimed_{page-1}", style="primary"))
+            nav_row.append(InlineKeyboardButton(f"📄 {page}/{total_pages}", callback_data="noop", style="primary"))
             if page < total_pages:
-                nav_row.append(InlineKeyboardButton("Next ➡️", callback_data=f"admin_bpage_unclaimed_{page+1}"))
+                nav_row.append(InlineKeyboardButton("Next ➡️", callback_data=f"admin_bpage_unclaimed_{page+1}", style="primary"))
             buttons.append(nav_row)
 
         buttons.append([
-            InlineKeyboardButton(f"🟢 ভেরিফাইড হিস্টোরি ({len(claimed)})", callback_data="admin_bmode_claimed"),
-            InlineKeyboardButton("🔙 লাইভ ডিপোজিট ফিড", callback_data="admin_bmode_live")
+            InlineKeyboardButton(f"🟢 ভেরিফাইড হিস্টোরি ({len(claimed)})", callback_data="admin_bmode_claimed", style="success"),
+            InlineKeyboardButton("🔙 লাইভ ডিপোজিট ফিড", callback_data="admin_bmode_live", style="danger")
         ])
         buttons.append([
-            InlineKeyboardButton("🔄 Refresh", callback_data="admin_bmode_unclaimed"),
-            InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin")
+            InlineKeyboardButton("🔄 Refresh", callback_data="admin_bmode_unclaimed", style="primary"),
+            InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin", style="danger")
         ])
 
     if query:
@@ -2408,8 +2408,8 @@ async def handle_admin_sync_callback(query, context: ContextTypes.DEFAULT_TYPE):
 
     buttons = [
         [
-            InlineKeyboardButton("🔄 Sync Again", callback_data="admin_sync"),
-            InlineKeyboardButton("🔙 Admin Panel", callback_data="nav_admin")
+            InlineKeyboardButton("🔄 Sync Again", callback_data="admin_sync", style="primary"),
+            InlineKeyboardButton("🔙 Admin Panel", callback_data="nav_admin", style="danger")
         ]
     ]
     await query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(buttons))
@@ -2442,24 +2442,24 @@ async def handle_admin_deposits_callback(query, context: ContextTypes.DEFAULT_TY
             f"🔗 TxHash: `{tx_short}`\n\n"
         )
         row = [
-            InlineKeyboardButton(f"✅ Approve (${amt:.2f})", callback_data=f"dep_appr_{t_no}"),
-            InlineKeyboardButton("❌ Reject", callback_data=f"dep_rej_{t_no}"),
+            InlineKeyboardButton(f"✅ Approve (${amt:.2f})", callback_data=f"dep_appr_{t_no}", style="success"),
+            InlineKeyboardButton("❌ Reject", callback_data=f"dep_rej_{t_no}", style="danger"),
         ]
         if d.get('tx_hash'):
             exp_url = get_explorer_url(net, d['tx_hash'])
-            row.append(InlineKeyboardButton("🔍 Explorer", url=exp_url))
+            row.append(InlineKeyboardButton("🔍 Explorer", url=exp_url, style="primary"))
         buttons.append(row)
 
     if not pending:
         text += "_No pending deposit orders with submitted TxIDs._\n\n"
 
     buttons.append([
-        InlineKeyboardButton("🔄 Refresh", callback_data="admin_deposits"),
-        InlineKeyboardButton("🗑️ Clear Stale Invoices", callback_data="admin_clear_stale_deposits")
+        InlineKeyboardButton("🔄 Refresh", callback_data="admin_deposits", style="primary"),
+        InlineKeyboardButton("🗑️ Clear Stale Invoices", callback_data="admin_clear_stale_deposits", style="danger")
     ])
     buttons.append([
-        InlineKeyboardButton("📜 All Deposits History", callback_data="admin_all_deposits"),
-        InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin")
+        InlineKeyboardButton("📜 All Deposits History", callback_data="admin_all_deposits", style="primary"),
+        InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin", style="danger")
     ])
     await query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(buttons))
 
@@ -2498,22 +2498,22 @@ async def handle_admin_all_deposits_callback(query, context: ContextTypes.DEFAUL
         )
         if st in ("PENDING", "PENDING_VERIFICATION", "INITIAL"):
             buttons.append([
-                InlineKeyboardButton(f"✅ Approve (${amt:.2f})", callback_data=f"dep_appr_{t_no}"),
-                InlineKeyboardButton("❌ Reject", callback_data=f"dep_rej_{t_no}")
+                InlineKeyboardButton(f"✅ Approve (${amt:.2f})", callback_data=f"dep_appr_{t_no}", style="success"),
+                InlineKeyboardButton("❌ Reject", callback_data=f"dep_rej_{t_no}", style="danger")
             ])
 
     if not deposits:
         text += "_No deposits found for this filter._\n\n"
 
     buttons.append([
-        InlineKeyboardButton("🌐 All", callback_data="admin_all_deposits"),
-        InlineKeyboardButton("🟢 Paid", callback_data="admin_all_deposits_paid"),
-        InlineKeyboardButton("⏳ Pending", callback_data="admin_all_deposits_pending"),
-        InlineKeyboardButton("🔴 Rejected", callback_data="admin_all_deposits_rejected"),
+        InlineKeyboardButton("🌐 All", callback_data="admin_all_deposits", style="primary"),
+        InlineKeyboardButton("🟢 Paid", callback_data="admin_all_deposits_paid", style="success"),
+        InlineKeyboardButton("⏳ Pending", callback_data="admin_all_deposits_pending", style="primary"),
+        InlineKeyboardButton("🔴 Rejected", callback_data="admin_all_deposits_rejected", style="danger"),
     ])
     buttons.append([
-        InlineKeyboardButton("🔄 Refresh", callback_data="admin_all_deposits"),
-        InlineKeyboardButton("🔙 Admin Panel", callback_data="nav_admin")
+        InlineKeyboardButton("🔄 Refresh", callback_data="admin_all_deposits", style="primary"),
+        InlineKeyboardButton("🔙 Admin Panel", callback_data="nav_admin", style="danger")
     ])
     await query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(buttons))
 
@@ -2544,15 +2544,15 @@ async def handle_admin_deposited_users_callback(query, context: ContextTypes.DEF
             f"━━━━━━━━━━━━━━━━━━━━\n"
         )
         buttons.append([
-            InlineKeyboardButton(f"⚙️ Manage {btn_label[:14]} (${curr_bal:.2f})", callback_data=f"admin_usr_{u_id}")
+            InlineKeyboardButton(f"⚙️ Manage {btn_label[:14]} (${curr_bal:.2f})", callback_data=f"admin_usr_{u_id}", style="primary")
         ])
 
     if not users:
         text += "_No user has deposited yet._"
 
     buttons.append([
-        InlineKeyboardButton("🔄 Refresh", callback_data="admin_deposited_users"),
-        InlineKeyboardButton("🔙 Admin Panel", callback_data="nav_admin")
+        InlineKeyboardButton("🔄 Refresh", callback_data="admin_deposited_users", style="primary"),
+        InlineKeyboardButton("🔙 Admin Panel", callback_data="nav_admin", style="danger")
     ])
     await query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(buttons))
 
@@ -2577,8 +2577,8 @@ async def handle_admin_reseller_keys_callback(query, context: ContextTypes.DEFAU
             text += f"{st} *{u_label}* (`{u_id}`) | 💳 `${bal:.2f}`\n🔑 {key_short} (Used: `{last_u_str}`)\n\n"
 
     buttons = [
-        [InlineKeyboardButton("🔄 Refresh", callback_data="admin_reseller_keys")],
-        [InlineKeyboardButton("🔙 Admin Panel", callback_data="nav_admin")]
+        [InlineKeyboardButton("🔄 Refresh", callback_data="admin_reseller_keys", style="primary")],
+        [InlineKeyboardButton("🔙 Admin Panel", callback_data="nav_admin", style="danger")]
     ]
     await query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(buttons))
 
@@ -2683,7 +2683,7 @@ async def handle_admin_router(update: Update, context: ContextTypes.DEFAULT_TYPE
             f"💰 *Amount:* `${amt:.2f}` USD\n\n"
             "Send the **User ID** or **@Username** in your next message to credit this balance and permanently bind this transaction to that user:",
             parse_mode=ParseMode.MARKDOWN,
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="admin_binance_deposits")]])
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="admin_binance_deposits", style="danger")]])
         )
     elif data.startswith("admin_locktx_"):
         tx_hash = data.replace("admin_locktx_", "").strip()
@@ -2716,7 +2716,7 @@ async def handle_admin_router(update: Update, context: ContextTypes.DEFAULT_TYPE
             f"💰 *Amount:* `${amt:.2f}` USD\n\n"
             "Send the **User ID** or **@Username** in your next message to credit this balance and permanently bind this transaction to that user:",
             parse_mode=ParseMode.MARKDOWN,
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="admin_binance_deposits")]])
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="admin_binance_deposits", style="danger")]])
         )
     elif data == "admin_binance_balance":
         await handle_admin_binance_balance_callback(query, context)
@@ -2746,7 +2746,7 @@ async def handle_admin_router(update: Update, context: ContextTypes.DEFAULT_TYPE
             "Send the **Username** (e.g. `@john_doe`) or **User ID** (e.g. `8934679152`) of the user you want to add as Assistant:\n\n"
             "_Note: The user will ONLY have permission to create in-house products and add stock._",
             parse_mode=ParseMode.MARKDOWN,
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="admin_manage_assistants")]])
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="admin_manage_assistants", style="danger")]])
         )
     elif data == "admin_prompt_del_assistant":
         context.user_data["waiting_for_admin_del_assistant"] = True
@@ -2755,7 +2755,7 @@ async def handle_admin_router(update: Update, context: ContextTypes.DEFAULT_TYPE
             "Send the **Username** (e.g. `@john_doe`) or **User ID** (e.g. `8934679152`) of the assistant you want to remove:\n\n"
             "⚡ _Their permission to create products and add stock will be revoked immediately._",
             parse_mode=ParseMode.MARKDOWN,
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="admin_manage_assistants")]])
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="admin_manage_assistants", style="danger")]])
         )
     elif data.startswith("admin_delasst_"):
         uid = int(data.replace("admin_delasst_", ""))
@@ -2812,7 +2812,7 @@ async def handle_admin_router(update: Update, context: ContextTypes.DEFAULT_TYPE
             f"📦 *Product:* {p_name} (ID: `{p_id}`)\n\n"
             f"Send your desired profit margin in USD to add on top of supplier price (e.g. `0.65`):",
             parse_mode=ParseMode.MARKDOWN,
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data=f"admin_editprodmargin_{p_id}")]])
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data=f"admin_editprodmargin_{p_id}", style="danger")]])
         )
     elif data.startswith("admin_prodcustomprice_"):
         p_id = int(data.replace("admin_prodcustomprice_", ""))
@@ -2827,7 +2827,7 @@ async def handle_admin_router(update: Update, context: ContextTypes.DEFAULT_TYPE
             f"Send your desired **Final Selling Price** in USD (e.g. `1.80`):\n"
             f"_(The bot will automatically calculate your profit margin)_",
             parse_mode=ParseMode.MARKDOWN,
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data=f"admin_editprodmargin_{p_id}")]])
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data=f"admin_editprodmargin_{p_id}", style="danger")]])
         )
     elif data.startswith("admin_setmargin_val_"):
         val = float(data.replace("admin_setmargin_val_", ""))
@@ -2839,7 +2839,7 @@ async def handle_admin_router(update: Update, context: ContextTypes.DEFAULT_TYPE
             "This margin applies to all products that don't have an individual custom margin.\n\n"
             "Send the default profit margin in USD (e.g. `0.30`):",
             parse_mode=ParseMode.MARKDOWN,
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="admin_margins")]])
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="admin_margins", style="danger")]])
         )
     elif data == "admin_setsellprice_gemini":
         context.user_data["waiting_for_admin_gemini_sell_price"] = True
@@ -2851,14 +2851,14 @@ async def handle_admin_router(update: Update, context: ContextTypes.DEFAULT_TYPE
             f"Send your desired **Final Selling Price** in USD (e.g. `0.75`):\n"
             f"_(The bot will automatically calculate your profit margin)_",
             parse_mode=ParseMode.MARKDOWN,
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="admin_margins")]])
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="admin_margins", style="danger")]])
         )
     elif data == "admin_setmargin_product":
         context.user_data["waiting_for_admin_setmargin_product"] = True
         await query.edit_message_text(
             "📦 *Set Custom Product Margin*\n\nSend the Product ID and Margin Amount:\n`<product_id> <amount>`\n\nExample: `9 0.50`",
             parse_mode=ParseMode.MARKDOWN,
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="admin_margins")]])
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="admin_margins", style="danger")]])
         )
     elif data == "admin_key":
         await handle_admin_key_callback(query, context)
@@ -2867,7 +2867,7 @@ async def handle_admin_router(update: Update, context: ContextTypes.DEFAULT_TYPE
         await query.edit_message_text(
             "🔑 *Set Shop API Key*\n\nSend the new Shop API Key (sk_shop_xxx...):",
             parse_mode=ParseMode.MARKDOWN,
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="admin_key")]])
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="admin_key", style="danger")]])
         )
     elif data == "admin_testkey":
         await handle_admin_key_test_callback(query, context)
@@ -2907,7 +2907,7 @@ async def handle_admin_router(update: Update, context: ContextTypes.DEFAULT_TYPE
         await query.edit_message_text(
             f"✏️ *Set Exact Balance for User `{t_uid}`*\n\nSend the new exact balance in USD (e.g. `15.00`):",
             parse_mode=ParseMode.MARKDOWN,
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data=f"admin_usr_{t_uid}")]])
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data=f"admin_usr_{t_uid}", style="danger")]])
         )
     elif data.startswith("admin_ubblock_"):
         t_uid = int(data.replace("admin_ubblock_", ""))
@@ -2928,7 +2928,7 @@ async def handle_admin_router(update: Update, context: ContextTypes.DEFAULT_TYPE
             "Send the **Username** (e.g. `@john_doe`) or **User ID** (e.g. `6201398546`) of the user you want to block:\n\n"
             "_Note: The user can still deposit funds, but when attempting to buy, their order will be paused and they will be instructed to contact Admin support._",
             parse_mode=ParseMode.MARKDOWN,
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="admin_blocked_buyers")]])
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="admin_blocked_buyers", style="danger")]])
         )
     elif data == "admin_custom_prods":
         await handle_admin_custom_products_callback(query, context)
@@ -2944,7 +2944,7 @@ async def handle_admin_router(update: Update, context: ContextTypes.DEFAULT_TYPE
             "• `Gemini Advanced 1 Year Subscription`\n"
             "• `ChatGPT Plus Private Login`",
             parse_mode=ParseMode.MARKDOWN,
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="admin_custom_prods")]])
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="admin_custom_prods", style="danger")]])
         )
     elif data == "admin_prompt_add_cust_prod":
         context.user_data["waiting_for_admin_add_cust_prod"] = True
@@ -2957,7 +2957,7 @@ async def handle_admin_router(update: Update, context: ContextTypes.DEFAULT_TYPE
             "• `NordVPN 1 Year Account | 1.80`\n"
             "• `Canva Pro Invite Link | 0.99`",
             parse_mode=ParseMode.MARKDOWN,
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="admin_custom_prods")]])
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="admin_custom_prods", style="danger")]])
         )
     elif data.startswith("admin_addstock_menu_"):
         c_id = int(data.replace("admin_addstock_menu_", ""))
@@ -2980,9 +2980,9 @@ async def handle_admin_router(update: Update, context: ContextTypes.DEFAULT_TYPE
             "Load multiple accounts separated by lines, numbers (`1.`, `2.`), or dividers (`---`)."
         )
         buttons = [
-            [InlineKeyboardButton("📝 Add Single Item (Large Text)", callback_data=f"admin_addstock_single_{c_id}")],
-            [InlineKeyboardButton("📑 Batch Add Multiple Accounts", callback_data=f"admin_addstock_batch_{c_id}")],
-            [InlineKeyboardButton("🔙 Back to Products", callback_data="admin_custom_prods")]
+            [InlineKeyboardButton("📝 Add Single Item (Large Text)", callback_data=f"admin_addstock_single_{c_id}", style="success")],
+            [InlineKeyboardButton("📑 Batch Add Multiple Accounts", callback_data=f"admin_addstock_batch_{c_id}", style="primary")],
+            [InlineKeyboardButton("🔙 Back to Products", callback_data="admin_custom_prods", style="danger")]
         ]
         await safe_edit_message_text(query, text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(buttons))
     elif data.startswith("admin_addstock_single_"):
@@ -3004,7 +3004,7 @@ async def handle_admin_router(update: Update, context: ContextTypes.DEFAULT_TYPE
             "Paste your complete credentials/text in your next message.\n\n"
             "💡 _Whatever text, links, passwords, or paragraphs you send will be saved as **1 single stock unit** and delivered to the buyer._"
         )
-        await safe_edit_message_text(query, text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="admin_custom_prods")]]))
+        await safe_edit_message_text(query, text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="admin_custom_prods", style="danger")]]))
     elif data.startswith("admin_addstock_more_"):
         c_id = int(data.replace("admin_addstock_more_", ""))
         prod = await database.get_custom_product(c_id)
@@ -3018,8 +3018,8 @@ async def handle_admin_router(update: Update, context: ContextTypes.DEFAULT_TYPE
             "💡 _This item will be saved to stock. No user alert will be sent until you tap Done._"
         )
         buttons = [
-            [InlineKeyboardButton("✅ Done & Broadcast Alert", callback_data=f"admin_finish_stock_broadcast_{c_id}")],
-            [InlineKeyboardButton("📦 Finish Silently (No Alert)", callback_data=f"admin_finish_stock_silent_{c_id}")]
+            [InlineKeyboardButton("✅ Done & Broadcast Alert", callback_data=f"admin_finish_stock_broadcast_{c_id}", style="success")],
+            [InlineKeyboardButton("📦 Finish Silently (No Alert)", callback_data=f"admin_finish_stock_silent_{c_id}", style="primary")]
         ]
         await safe_edit_message_text(query, text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(buttons))
     elif data.startswith("admin_addstock_batch_") or data.startswith("admin_addstock_"):
@@ -3047,7 +3047,7 @@ async def handle_admin_router(update: Update, context: ContextTypes.DEFAULT_TYPE
             "4️⃣ Standard single-line accounts (`email:pass`)\n\n"
             "⚡ _Each block will be parsed and loaded into available stock!_"
         )
-        await safe_edit_message_text(query, text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="admin_custom_prods")]]))
+        await safe_edit_message_text(query, text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="admin_custom_prods", style="danger")]]))
     elif data.startswith("admin_finish_stock_broadcast_"):
         c_id = int(data.replace("admin_finish_stock_broadcast_", ""))
         session = context.user_data.pop("pending_stock_session", {})
@@ -3090,8 +3090,8 @@ async def handle_admin_router(update: Update, context: ContextTypes.DEFAULT_TYPE
             "Your store catalog is live with the updated stock!"
         )
         buttons = [
-            [InlineKeyboardButton("📦 Custom Products", callback_data="admin_custom_prods")],
-            [InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin")]
+            [InlineKeyboardButton("📦 Custom Products", callback_data="admin_custom_prods", style="primary")],
+            [InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin", style="danger")]
         ]
         await safe_edit_message_text(query, text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(buttons))
     elif data.startswith("admin_finish_stock_silent_"):
@@ -3146,8 +3146,8 @@ async def handle_admin_router(update: Update, context: ContextTypes.DEFAULT_TYPE
             f"*Sample Next Items to be Delivered:*\n\n{stock_text}",
             parse_mode=ParseMode.MARKDOWN,
             reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("➕ Add More Stock", callback_data=f"admin_addstock_{c_id}")],
-                [InlineKeyboardButton("🔙 Custom Products", callback_data="admin_custom_prods")]
+                [InlineKeyboardButton("➕ Add More Stock", callback_data=f"admin_addstock_{c_id}", style="success")],
+                [InlineKeyboardButton("🔙 Custom Products", callback_data="admin_custom_prods", style="danger")]
             ])
         )
     elif data.startswith("admin_delcust_"):
@@ -3168,7 +3168,7 @@ async def handle_admin_router(update: Update, context: ContextTypes.DEFAULT_TYPE
             "• `@john_doe 10.00`\n"
             "• `6575066703 10.00`",
             parse_mode=ParseMode.MARKDOWN,
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="admin_manage_balance")]])
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="admin_manage_balance", style="danger")]])
         )
     elif data == "admin_deductbalance":
         context.user_data["waiting_for_admin_deductbalance"] = True
@@ -3180,7 +3180,7 @@ async def handle_admin_router(update: Update, context: ContextTypes.DEFAULT_TYPE
             "• `@john_doe 5.00`\n"
             "• `6575066703 5.00`",
             parse_mode=ParseMode.MARKDOWN,
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="admin_manage_balance")]])
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="admin_manage_balance", style="danger")]])
         )
     elif data == "admin_setexactbalance":
         context.user_data["waiting_for_admin_setexactbalance"] = True
@@ -3192,7 +3192,7 @@ async def handle_admin_router(update: Update, context: ContextTypes.DEFAULT_TYPE
             "• `@john_doe 20.00`\n"
             "• `6575066703 20.00`",
             parse_mode=ParseMode.MARKDOWN,
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="admin_manage_balance")]])
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="admin_manage_balance", style="danger")]])
         )
     elif data == "admin_checkbalance":
         context.user_data["waiting_for_admin_checkbalance"] = True
@@ -3200,14 +3200,14 @@ async def handle_admin_router(update: Update, context: ContextTypes.DEFAULT_TYPE
             "🔍 *Check User Balance & Info*\n\n"
             "Send the **Username** (e.g. `@john_doe`) or **User ID** (e.g. `6575066703`):",
             parse_mode=ParseMode.MARKDOWN,
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="admin_manage_balance")]])
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="admin_manage_balance", style="danger")]])
         )
     elif data == "admin_broadcast":
         context.user_data["waiting_for_admin_broadcast"] = True
         await query.edit_message_text(
             "📢 *Broadcast Message*\n\nType the message you want to send to all bot users:",
             parse_mode=ParseMode.MARKDOWN,
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="nav_admin")]])
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="nav_admin", style="danger")]])
         )
     elif data == "admin_pricedrop_start" or data.startswith("admin_pricedrop_page_"):
         page = 1
@@ -3229,7 +3229,7 @@ async def handle_admin_router(update: Update, context: ContextTypes.DEFAULT_TYPE
             "📌 *Example:*\n"
             "`Gemini Advanced 1 Month | 10.00 | 6.50 | ⚡ 35% OFF - Special promo offer!`",
             parse_mode=ParseMode.MARKDOWN,
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="admin_pricedrop_start")]])
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="admin_pricedrop_start", style="danger")]])
         )
     elif data == "admin_pricedrop_confirm":
         await handle_admin_pricedrop_send(query, context)
@@ -3242,14 +3242,14 @@ async def handle_admin_router(update: Update, context: ContextTypes.DEFAULT_TYPE
         await query.edit_message_text(
             "🔑 *Set Binance API Key*\n\nSend your Binance API Key in your next message:",
             parse_mode=ParseMode.MARKDOWN,
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="admin_binance_keys")]])
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="admin_binance_keys", style="danger")]])
         )
     elif data == "admin_set_binance_secret":
         context.user_data["waiting_for_binance_api_secret"] = True
         await query.edit_message_text(
             "🔒 *Set Binance Secret Key*\n\nSend your Binance Secret Key in your next message:",
             parse_mode=ParseMode.MARKDOWN,
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="admin_binance_keys")]])
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="admin_binance_keys", style="danger")]])
         )
     elif data == "admin_deposits":
         await handle_admin_deposits_callback(query, context)
@@ -3279,8 +3279,8 @@ async def handle_admin_router(update: Update, context: ContextTypes.DEFAULT_TYPE
                 f"💳 *User New Balance:* `${new_bal:.2f}` USD",
                 parse_mode=ParseMode.MARKDOWN,
                 reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("📋 View Pending Deposits", callback_data="admin_deposits")],
-                    [InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin")]
+                    [InlineKeyboardButton("📋 View Pending Deposits", callback_data="admin_deposits", style="primary")],
+                    [InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin", style="danger")]
                 ])
             )
             # Broadcast to Notification Group (-1003721268860)
@@ -3307,12 +3307,12 @@ async def handle_admin_router(update: Update, context: ContextTypes.DEFAULT_TYPE
                     chat_id=uid,
                     text=user_msg,
                     parse_mode=ParseMode.MARKDOWN,
-                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🛒 Browse Products", callback_data="nav_products")]])
+                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🛒 Browse Products", callback_data="nav_products", style="success")]])
                 )
             except Exception as e:
                 logger.warning(f"Could not notify user of approved deposit: {e}")
         else:
-            await query.edit_message_text("❌ Deposit record not found or already processed.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Admin Panel", callback_data="nav_admin")]]))
+            await query.edit_message_text("❌ Deposit record not found or already processed.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Admin Panel", callback_data="nav_admin", style="danger")]]))
     elif data.startswith("dep_rej_"):
         trade_no = data.replace("dep_rej_", "")
         rec = await database.reject_deposit(trade_no)
@@ -3324,8 +3324,8 @@ async def handle_admin_router(update: Update, context: ContextTypes.DEFAULT_TYPE
                 f"👤 *User ID:* `{uid}`",
                 parse_mode=ParseMode.MARKDOWN,
                 reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("📋 View Pending Deposits", callback_data="admin_deposits")],
-                    [InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin")]
+                    [InlineKeyboardButton("📋 View Pending Deposits", callback_data="admin_deposits", style="primary")],
+                    [InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin", style="danger")]
                 ])
             )
             try:
@@ -3337,7 +3337,7 @@ async def handle_admin_router(update: Update, context: ContextTypes.DEFAULT_TYPE
             except Exception:
                 pass
         else:
-            await query.edit_message_text("❌ Deposit record not found.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Admin Panel", callback_data="nav_admin")]]))
+            await query.edit_message_text("❌ Deposit record not found.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Admin Panel", callback_data="nav_admin", style="danger")]]))
 
 # --- TEXT COMMANDS FOR ADMIN (POWER USERS) ---
 
@@ -3355,7 +3355,7 @@ async def setmargin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "• Set custom margin for a specific product ID:\n"
             "  `/setmargin 9 0.50`",
             parse_mode=ParseMode.MARKDOWN,
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("💵 Open Margin UI", callback_data="admin_margins")]])
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("💵 Open Margin UI", callback_data="admin_margins", style="primary")]])
         )
         return
 
@@ -3376,7 +3376,7 @@ async def setmargin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         msg = f"✅ *Profit Margin for Product ID `{target_key}` updated:* `${margin_val:.2f}` USD."
 
-    buttons = [[InlineKeyboardButton("💵 Margin Settings", callback_data="admin_margins"), InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin")]]
+    buttons = [[InlineKeyboardButton("💵 Margin Settings", callback_data="admin_margins", style="primary"), InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin", style="danger")]]
     await update.message.reply_text(msg, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(buttons))
 
 async def margins_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -3402,8 +3402,8 @@ async def margins_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text += "_No custom product margins configured._\n"
 
     buttons = [
-        [InlineKeyboardButton("💵 Open Margin Menu", callback_data="admin_margins")],
-        [InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin")]
+        [InlineKeyboardButton("💵 Open Margin Menu", callback_data="admin_margins", style="primary")],
+        [InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin", style="danger")]
     ]
     await update.message.reply_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(buttons))
 
@@ -3439,13 +3439,13 @@ async def setkey_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"💵 *Total Spent:* `${total_spent:.2f}` USD\n"
             f"🔄 _Syncing latest product catalog in background..._",
             parse_mode=ParseMode.MARKDOWN,
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin")]])
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin", style="danger")]])
         )
     except Exception as e:
         await update.message.reply_text(
             f"⚠️ *Key saved, but validation returned error:*\n`{e}`",
             parse_mode=ParseMode.MARKDOWN,
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin")]])
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin", style="danger")]])
         )
 
 async def balance_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -3460,7 +3460,7 @@ async def balance_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(
             f"💳 *Supplier Deposit Balance:* `${bal:.2f}` USD",
             parse_mode=ParseMode.MARKDOWN,
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔄 Refresh", callback_data="admin_balance"), InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin")]])
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔄 Refresh", callback_data="admin_balance", style="primary"), InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin", style="danger")]])
         )
     except Exception as e:
         await update.message.reply_text(f"❌ Error: {e}")
@@ -3481,7 +3481,7 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         text,
         parse_mode=ParseMode.MARKDOWN,
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔄 Refresh", callback_data="admin_stats"), InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin")]])
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔄 Refresh", callback_data="admin_stats", style="primary"), InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin", style="danger")]])
     )
 
 async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -3508,7 +3508,7 @@ async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         f"📢 *Broadcast Complete!*\n\n🟢 Delivered: `{success_count}`\n🔴 Failed: `{fail_count}`",
         parse_mode=ParseMode.MARKDOWN,
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin")]])
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin", style="danger")]])
     )
 
 # --- DEPOSIT SYSTEM & PAYMENT HANDLERS ---
@@ -3574,7 +3574,7 @@ async def handle_deposit_preset(update: Update, context: ContextTypes.DEFAULT_TY
             "✏️ *Custom Deposit Amount*\n\n"
             "Send the amount you wish to deposit in USD (e.g. `15.50`):",
             parse_mode=ParseMode.MARKDOWN,
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="nav_deposit")]]),
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="nav_deposit", style="danger")]]),
         )
         return
 
@@ -3590,10 +3590,10 @@ async def show_network_selector(query_or_update, context: ContextTypes.DEFAULT_T
         "Choose the network you will send from:"
     )
     buttons = [
-        [InlineKeyboardButton("🟡 BEP20 (BSC)", callback_data=f"dep_net_BEP20_{amount}")],
-        [InlineKeyboardButton("🔴 TRC20 (TRON)", callback_data=f"dep_net_TRC20_{amount}")],
-        [InlineKeyboardButton("🔵 ERC20 (ETH)", callback_data=f"dep_net_ERC20_{amount}")],
-        [InlineKeyboardButton("🔙 Back", callback_data="nav_deposit")],
+        [InlineKeyboardButton("🟡 BEP20 (BSC)", callback_data=f"dep_net_BEP20_{amount}", style="primary")],
+        [InlineKeyboardButton("🔴 TRC20 (TRON)", callback_data=f"dep_net_TRC20_{amount}", style="danger")],
+        [InlineKeyboardButton("🔵 ERC20 (ETH)", callback_data=f"dep_net_ERC20_{amount}", style="primary")],
+        [InlineKeyboardButton("🔙 Back", callback_data="nav_deposit", style="danger")],
     ]
     if hasattr(query_or_update, "edit_message_text"):
         await query_or_update.edit_message_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(buttons))
@@ -3642,8 +3642,8 @@ async def handle_deposit_network(update: Update, context: ContextTypes.DEFAULT_T
         f"✅ After sending, tap *Submit TxHash* below."
     )
     buttons = [
-        [InlineKeyboardButton("⚡ Submit TxHash", callback_data=f"dep_tx_{network}_{trade_no}")],
-        [InlineKeyboardButton("🔙 Back", callback_data="nav_deposit")],
+        [InlineKeyboardButton("⚡ Submit TxHash", callback_data=f"dep_tx_{network}_{trade_no}", style="success")],
+        [InlineKeyboardButton("🔙 Back", callback_data="nav_deposit", style="danger")],
     ]
     await query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(buttons))
 
@@ -3670,7 +3670,7 @@ async def handle_txhash_prompt(update: Update, context: ContextTypes.DEFAULT_TYP
         "• Or **Binance Internal Transfer ID** (e.g. `406636190834`)\n\n"
         "💡 _In Binance: Go to Wallets ➔ History ➔ Withdrawal ➔ Copy the TxID._",
         parse_mode=ParseMode.MARKDOWN,
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="nav_deposit")]]),
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="nav_deposit", style="danger")]]),
     )
 
 async def handle_user_text_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -3717,7 +3717,7 @@ async def handle_user_text_input(update: Update, context: ContextTypes.DEFAULT_T
                 "Please enter a valid blockchain **TxHash** (e.g. `0x123abc...` / `a1b2c3...`) or **Binance Internal Transfer ID** (e.g. `406636190834`).\n\n"
                 "Fake or random texts are not accepted.",
                 parse_mode=ParseMode.MARKDOWN,
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("💳 Back to Deposit", callback_data="nav_deposit")]])
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("💳 Back to Deposit", callback_data="nav_deposit", style="danger")]])
             )
             return
 
@@ -3730,8 +3730,8 @@ async def handle_user_text_input(update: Update, context: ContextTypes.DEFAULT_T
                 "Duplicate submissions are strictly rejected.",
                 parse_mode=ParseMode.MARKDOWN,
                 reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("💳 New Deposit", callback_data="nav_deposit")],
-                    [InlineKeyboardButton("🏠 Main Menu", callback_data="nav_main")]
+                    [InlineKeyboardButton("💳 New Deposit", callback_data="nav_deposit", style="primary")],
+                    [InlineKeyboardButton("🏠 Main Menu", callback_data="nav_main", style="danger")]
                 ])
             )
             return
@@ -3794,8 +3794,8 @@ async def handle_user_text_input(update: Update, context: ContextTypes.DEFAULT_T
                     f"💳 *New Bot Balance:* `${new_bal:.2f}` USD",
                     parse_mode=ParseMode.MARKDOWN,
                     reply_markup=InlineKeyboardMarkup([
-                        [InlineKeyboardButton("🛒 Browse Shop", callback_data="nav_products")],
-                        [InlineKeyboardButton("🏠 Main Menu", callback_data="nav_main")]
+                        [InlineKeyboardButton("🛒 Browse Shop", callback_data="nav_products", style="success")],
+                        [InlineKeyboardButton("🏠 Main Menu", callback_data="nav_main", style="danger")]
                     ])
                 )
         except Exception as e:
@@ -3813,8 +3813,8 @@ async def handle_user_text_input(update: Update, context: ContextTypes.DEFAULT_T
                 "⚡ Your deposit will be credited as soon as it is confirmed on the blockchain / verified by admin!",
                 parse_mode=ParseMode.MARKDOWN,
                 reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("🛒 Browse Shop", callback_data="nav_products")],
-                    [InlineKeyboardButton("🏠 Main Menu", callback_data="nav_main")]
+                    [InlineKeyboardButton("🛒 Browse Shop", callback_data="nav_products", style="success")],
+                    [InlineKeyboardButton("🏠 Main Menu", callback_data="nav_main", style="danger")]
                 ])
             )
 
@@ -3838,12 +3838,12 @@ async def handle_user_text_input(update: Update, context: ContextTypes.DEFAULT_T
                 )
                 admin_btns = [
                     [
-                        InlineKeyboardButton(f"✅ Approve (+${amount:.2f})", callback_data=f"dep_appr_{trade_no}"),
-                        InlineKeyboardButton("❌ Reject", callback_data=f"dep_rej_{trade_no}")
+                        InlineKeyboardButton(f"✅ Approve (+${amount:.2f})", callback_data=f"dep_appr_{trade_no}", style="success"),
+                        InlineKeyboardButton("❌ Reject", callback_data=f"dep_rej_{trade_no}", style="danger")
                     ]
                 ]
                 if len(tx_hash) > 20 and all(c in "0123456789abcdefABCDEFxX" for c in tx_hash):
-                    admin_btns.append([InlineKeyboardButton("🔍 Open Explorer", url=explorer_url)])
+                    admin_btns.append([InlineKeyboardButton("🔍 Open Explorer", url=explorer_url, style="primary")])
 
                 await context.bot.send_message(
                     chat_id=ADMIN_ID,
@@ -3866,8 +3866,8 @@ async def handle_user_text_input(update: Update, context: ContextTypes.DEFAULT_T
             f"✅ *{label} Wallet Updated!*\n\n📍 `{text}`",
             parse_mode=ParseMode.MARKDOWN,
             reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("📍 Back to Wallets", callback_data="admin_wallets")],
-                [InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin")]
+                [InlineKeyboardButton("📍 Back to Wallets", callback_data="admin_wallets", style="danger")],
+                [InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin", style="danger")]
             ])
         )
         return
@@ -3895,13 +3895,13 @@ async def handle_user_text_input(update: Update, context: ContextTypes.DEFAULT_T
                 f"💵 *Total Spent:* `${total_spent:.2f}` USD\n"
                 f"🔄 _Syncing product catalog in background..._",
                 parse_mode=ParseMode.MARKDOWN,
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin")]])
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin", style="danger")]])
             )
         except Exception as e:
             await update.message.reply_text(
                 f"⚠️ *Key saved, but validation warning:*\n`{e}`",
                 parse_mode=ParseMode.MARKDOWN,
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin")]])
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin", style="danger")]])
             )
         return
 
@@ -3913,7 +3913,7 @@ async def handle_user_text_input(update: Update, context: ContextTypes.DEFAULT_T
             await update.message.reply_text(
                 "❌ Format: `<@username|user_id> <amount>` (e.g. `@john_doe 10.00`)",
                 parse_mode=ParseMode.MARKDOWN,
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("💸 Balance Manager", callback_data="admin_manage_balance")]])
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("💸 Balance Manager", callback_data="admin_manage_balance", style="primary")]])
             )
             return
         
@@ -3922,7 +3922,7 @@ async def handle_user_text_input(update: Update, context: ContextTypes.DEFAULT_T
             await update.message.reply_text(
                 f"❌ User `{parts[0]}` not found in database. User must start the bot at least once.",
                 parse_mode=ParseMode.MARKDOWN,
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("💸 Balance Manager", callback_data="admin_manage_balance")]])
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("💸 Balance Manager", callback_data="admin_manage_balance", style="primary")]])
             )
             return
         try:
@@ -3930,7 +3930,7 @@ async def handle_user_text_input(update: Update, context: ContextTypes.DEFAULT_T
         except ValueError:
             await update.message.reply_text(
                 "❌ Invalid amount. Please enter a valid number.",
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("💸 Balance Manager", callback_data="admin_manage_balance")]])
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("💸 Balance Manager", callback_data="admin_manage_balance", style="primary")]])
             )
             return
 
@@ -3957,9 +3957,9 @@ async def handle_user_text_input(update: Update, context: ContextTypes.DEFAULT_T
             f"💳 *New User Balance:* `${new_bal:.2f}` USD",
             parse_mode=ParseMode.MARKDOWN,
             reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("👤 Manage User", callback_data=f"admin_usr_{target_uid}")],
-                [InlineKeyboardButton("💸 Balance Manager", callback_data="admin_manage_balance")],
-                [InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin")]
+                [InlineKeyboardButton("👤 Manage User", callback_data=f"admin_usr_{target_uid}", style="success")],
+                [InlineKeyboardButton("💸 Balance Manager", callback_data="admin_manage_balance", style="primary")],
+                [InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin", style="danger")]
             ])
         )
         try:
@@ -3980,7 +3980,7 @@ async def handle_user_text_input(update: Update, context: ContextTypes.DEFAULT_T
             await update.message.reply_text(
                 "❌ Format: `<@username|user_id> <amount>` (e.g. `@john_doe 5.00`)",
                 parse_mode=ParseMode.MARKDOWN,
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("💸 Balance Manager", callback_data="admin_manage_balance")]])
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("💸 Balance Manager", callback_data="admin_manage_balance", style="primary")]])
             )
             return
 
@@ -3989,7 +3989,7 @@ async def handle_user_text_input(update: Update, context: ContextTypes.DEFAULT_T
             await update.message.reply_text(
                 f"❌ User `{parts[0]}` not found in database.",
                 parse_mode=ParseMode.MARKDOWN,
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("💸 Balance Manager", callback_data="admin_manage_balance")]])
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("💸 Balance Manager", callback_data="admin_manage_balance", style="primary")]])
             )
             return
         try:
@@ -3997,7 +3997,7 @@ async def handle_user_text_input(update: Update, context: ContextTypes.DEFAULT_T
         except ValueError:
             await update.message.reply_text(
                 "❌ Invalid amount. Please enter a valid number.",
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("💸 Balance Manager", callback_data="admin_manage_balance")]])
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("💸 Balance Manager", callback_data="admin_manage_balance", style="primary")]])
             )
             return
 
@@ -4012,9 +4012,9 @@ async def handle_user_text_input(update: Update, context: ContextTypes.DEFAULT_T
             f"💳 *New User Balance:* `${new_bal:.2f}` USD",
             parse_mode=ParseMode.MARKDOWN,
             reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("👤 Manage User", callback_data=f"admin_usr_{target_uid}")],
-                [InlineKeyboardButton("💸 Balance Manager", callback_data="admin_manage_balance")],
-                [InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin")]
+                [InlineKeyboardButton("👤 Manage User", callback_data=f"admin_usr_{target_uid}", style="success")],
+                [InlineKeyboardButton("💸 Balance Manager", callback_data="admin_manage_balance", style="primary")],
+                [InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin", style="danger")]
             ])
         )
         try:
@@ -4035,7 +4035,7 @@ async def handle_user_text_input(update: Update, context: ContextTypes.DEFAULT_T
             await update.message.reply_text(
                 "❌ Format: `<@username|user_id> <amount>` (e.g. `@john_doe 20.00`)",
                 parse_mode=ParseMode.MARKDOWN,
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("💸 Balance Manager", callback_data="admin_manage_balance")]])
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("💸 Balance Manager", callback_data="admin_manage_balance", style="primary")]])
             )
             return
 
@@ -4044,7 +4044,7 @@ async def handle_user_text_input(update: Update, context: ContextTypes.DEFAULT_T
             await update.message.reply_text(
                 f"❌ User `{parts[0]}` not found in database.",
                 parse_mode=ParseMode.MARKDOWN,
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("💸 Balance Manager", callback_data="admin_manage_balance")]])
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("💸 Balance Manager", callback_data="admin_manage_balance", style="primary")]])
             )
             return
         try:
@@ -4052,7 +4052,7 @@ async def handle_user_text_input(update: Update, context: ContextTypes.DEFAULT_T
         except ValueError:
             await update.message.reply_text(
                 "❌ Invalid amount. Please enter a valid number.",
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("💸 Balance Manager", callback_data="admin_manage_balance")]])
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("💸 Balance Manager", callback_data="admin_manage_balance", style="primary")]])
             )
             return
 
@@ -4066,9 +4066,9 @@ async def handle_user_text_input(update: Update, context: ContextTypes.DEFAULT_T
             f"💳 *Set Balance:* `${new_bal:.2f}` USD",
             parse_mode=ParseMode.MARKDOWN,
             reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("👤 Manage User", callback_data=f"admin_usr_{target_uid}")],
-                [InlineKeyboardButton("💸 Balance Manager", callback_data="admin_manage_balance")],
-                [InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin")]
+                [InlineKeyboardButton("👤 Manage User", callback_data=f"admin_usr_{target_uid}", style="success")],
+                [InlineKeyboardButton("💸 Balance Manager", callback_data="admin_manage_balance", style="primary")],
+                [InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin", style="danger")]
             ])
         )
         return
@@ -4095,9 +4095,9 @@ async def handle_user_text_input(update: Update, context: ContextTypes.DEFAULT_T
             f"💳 *New Balance:* `${new_bal:.2f}` USD",
             parse_mode=ParseMode.MARKDOWN,
             reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("👤 Back to User Control", callback_data=f"admin_usr_{target_uid}")],
-                [InlineKeyboardButton("💸 Balance Manager", callback_data="admin_manage_balance")],
-                [InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin")]
+                [InlineKeyboardButton("👤 Back to User Control", callback_data=f"admin_usr_{target_uid}", style="danger")],
+                [InlineKeyboardButton("💸 Balance Manager", callback_data="admin_manage_balance", style="primary")],
+                [InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin", style="danger")]
             ])
         )
         return
@@ -4110,7 +4110,7 @@ async def handle_user_text_input(update: Update, context: ContextTypes.DEFAULT_T
             await update.message.reply_text(
                 f"❌ User `{text.strip()}` not found in database. User must start the bot at least once.",
                 parse_mode=ParseMode.MARKDOWN,
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("💸 Balance Manager", callback_data="admin_manage_balance")]])
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("💸 Balance Manager", callback_data="admin_manage_balance", style="primary")]])
             )
             return
 
@@ -4134,14 +4134,14 @@ async def handle_user_text_input(update: Update, context: ContextTypes.DEFAULT_T
             parse_mode=ParseMode.MARKDOWN,
             reply_markup=InlineKeyboardMarkup([
                 [
-                    InlineKeyboardButton("👤 Quick Control Buttons", callback_data=f"admin_usr_{target_uid}")
+                    InlineKeyboardButton("👤 Quick Control Buttons", callback_data=f"admin_usr_{target_uid}", style="success")
                 ],
                 [
-                    InlineKeyboardButton("➕ Add Balance", callback_data="admin_addbalance"),
-                    InlineKeyboardButton("➖ Deduct", callback_data="admin_deductbalance")
+                    InlineKeyboardButton("➕ Add Balance", callback_data="admin_addbalance", style="success"),
+                    InlineKeyboardButton("➖ Deduct", callback_data="admin_deductbalance", style="primary")
                 ],
-                [InlineKeyboardButton("💸 Balance Manager", callback_data="admin_manage_balance")],
-                [InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin")]
+                [InlineKeyboardButton("💸 Balance Manager", callback_data="admin_manage_balance", style="primary")],
+                [InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin", style="danger")]
             ])
         )
         return
@@ -4160,7 +4160,7 @@ async def handle_user_text_input(update: Update, context: ContextTypes.DEFAULT_T
             "⚡ *The bot remains 100% active and will respond to /start and all users instantly!* "
             "You will receive a completion summary when it finishes.",
             parse_mode=ParseMode.MARKDOWN,
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin")]])
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin", style="danger")]])
         )
         return
 
@@ -4169,7 +4169,7 @@ async def handle_user_text_input(update: Update, context: ContextTypes.DEFAULT_T
         context.user_data["waiting_for_admin_pricedrop_new_price"] = False
         prod = context.user_data.get("pricedrop_selected_prod")
         if not prod:
-            await update.message.reply_text("❌ No product selected. Please try again from Admin Panel.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin")]]))
+            await update.message.reply_text("❌ No product selected. Please try again from Admin Panel.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin", style="danger")]]))
             return
 
         raw_input = text.strip()
@@ -4208,7 +4208,7 @@ async def handle_user_text_input(update: Update, context: ContextTypes.DEFAULT_T
             await update.message.reply_text(
                 "❌ *Invalid format.*\n\nPlease use: `<Product Name> | <Old Price> | <New Price> | <Optional Note>`\n\nExample: `Gemini Pro | 10.00 | 6.50 | Limited stock discount!`",
                 parse_mode=ParseMode.MARKDOWN,
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="admin_pricedrop_start")]])
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="admin_pricedrop_start", style="danger")]])
             )
             return
 
@@ -4251,8 +4251,8 @@ async def handle_user_text_input(update: Update, context: ContextTypes.DEFAULT_T
             f"🏷️ *Final User Selling Price:* `${target_sell_price:.2f}` USD",
             parse_mode=ParseMode.MARKDOWN,
             reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("💎 View Gemini Margins", callback_data="admin_margins")],
-                [InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin")]
+                [InlineKeyboardButton("💎 View Gemini Margins", callback_data="admin_margins", style="primary")],
+                [InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin", style="danger")]
             ])
         )
         return
@@ -4282,9 +4282,9 @@ async def handle_user_text_input(update: Update, context: ContextTypes.DEFAULT_T
             f"🏷️ *User Selling Price:* `${final_sell_p:.2f}` USD",
             parse_mode=ParseMode.MARKDOWN,
             reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("⚙️ Manage This Product", callback_data=f"admin_editprodmargin_{prod_id}")],
-                [InlineKeyboardButton("📋 All Products List", callback_data="admin_margins")],
-                [InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin")]
+                [InlineKeyboardButton("⚙️ Manage This Product", callback_data=f"admin_editprodmargin_{prod_id}", style="primary")],
+                [InlineKeyboardButton("📋 All Products List", callback_data="admin_margins", style="primary")],
+                [InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin", style="danger")]
             ])
         )
         return
@@ -4314,9 +4314,9 @@ async def handle_user_text_input(update: Update, context: ContextTypes.DEFAULT_T
             f"🏷️ *Final User Selling Price:* `${target_price:.2f}` USD",
             parse_mode=ParseMode.MARKDOWN,
             reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("⚙️ Manage This Product", callback_data=f"admin_editprodmargin_{prod_id}")],
-                [InlineKeyboardButton("📋 All Products List", callback_data="admin_margins")],
-                [InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin")]
+                [InlineKeyboardButton("⚙️ Manage This Product", callback_data=f"admin_editprodmargin_{prod_id}", style="primary")],
+                [InlineKeyboardButton("📋 All Products List", callback_data="admin_margins", style="primary")],
+                [InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin", style="danger")]
             ])
         )
         return
@@ -4340,8 +4340,8 @@ async def handle_user_text_input(update: Update, context: ContextTypes.DEFAULT_T
             "This margin is now applied to all products that do not have custom individual margins.",
             parse_mode=ParseMode.MARKDOWN,
             reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("📋 All Products Pricing", callback_data="admin_margins")],
-                [InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin")]
+                [InlineKeyboardButton("📋 All Products Pricing", callback_data="admin_margins", style="primary")],
+                [InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin", style="danger")]
             ])
         )
         return
@@ -4367,8 +4367,8 @@ async def handle_user_text_input(update: Update, context: ContextTypes.DEFAULT_T
             f"✅ *Product `{prod_key}` Margin Updated:*\n`${margin_val:.2f}` USD.",
             parse_mode=ParseMode.MARKDOWN,
             reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("💵 Back to Margins", callback_data="admin_margins")],
-                [InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin")]
+                [InlineKeyboardButton("💵 Back to Margins", callback_data="admin_margins", style="danger")],
+                [InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin", style="danger")]
             ])
         )
         return
@@ -4384,7 +4384,7 @@ async def handle_user_text_input(update: Update, context: ContextTypes.DEFAULT_T
             await update.message.reply_text(
                 f"❌ User `{text.strip()}` not found. Please enter a valid numerical User ID or active @username.",
                 parse_mode=ParseMode.MARKDOWN,
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to Binance Deposits", callback_data="admin_binance_deposits")]])
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to Binance Deposits", callback_data="admin_binance_deposits", style="danger")]])
             )
             return
 
@@ -4414,7 +4414,7 @@ async def handle_user_text_input(update: Update, context: ContextTypes.DEFAULT_T
             f"🆔 *TxID Bound:* `{tx_hash}`\n\n"
             "🔒 _This transaction has been permanently marked as PAID and cannot be claimed again._",
             parse_mode=ParseMode.MARKDOWN,
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🟡 Binance Deposits", callback_data="admin_binance_deposits")]])
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🟡 Binance Deposits", callback_data="admin_binance_deposits", style="primary")]])
         )
         return
 
@@ -4440,8 +4440,8 @@ async def handle_user_text_input(update: Update, context: ContextTypes.DEFAULT_T
             msg,
             parse_mode=ParseMode.MARKDOWN,
             reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("💵 Back to Margins", callback_data="admin_margins")],
-                [InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin")]
+                [InlineKeyboardButton("💵 Back to Margins", callback_data="admin_margins", style="danger")],
+                [InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin", style="danger")]
             ])
         )
         return
@@ -4454,9 +4454,9 @@ async def handle_user_text_input(update: Update, context: ContextTypes.DEFAULT_T
             f"✅ *Binance API Key Saved!*\n\n`{text[:8]}...{text[-4:]}`\n\nTap **Set Secret Key** below to set your API Secret:",
             parse_mode=ParseMode.MARKDOWN,
             reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("🔒 Set Secret Key", callback_data="admin_set_binance_secret")],
-                [InlineKeyboardButton("🔐 Binance Settings", callback_data="admin_binance_keys")],
-                [InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin")]
+                [InlineKeyboardButton("🔒 Set Secret Key", callback_data="admin_set_binance_secret", style="primary")],
+                [InlineKeyboardButton("🔐 Binance Settings", callback_data="admin_binance_keys", style="primary")],
+                [InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin", style="danger")]
             ])
         )
         return
@@ -4481,8 +4481,8 @@ async def handle_user_text_input(update: Update, context: ContextTypes.DEFAULT_T
                 "Auto-Payment and live balance monitoring are now fully active!",
                 parse_mode=ParseMode.MARKDOWN,
                 reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("🟡 View Full Balance", callback_data="admin_binance_balance")],
-                    [InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin")]
+                    [InlineKeyboardButton("🟡 View Full Balance", callback_data="admin_binance_balance", style="primary")],
+                    [InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin", style="danger")]
                 ])
             )
         else:
@@ -4490,8 +4490,8 @@ async def handle_user_text_input(update: Update, context: ContextTypes.DEFAULT_T
                 f"⚠️ *Keys saved, but validation warning:*\n`{res.get('error')}`",
                 parse_mode=ParseMode.MARKDOWN,
                 reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("🔐 Binance Settings", callback_data="admin_binance_keys")],
-                    [InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin")]
+                    [InlineKeyboardButton("🔐 Binance Settings", callback_data="admin_binance_keys", style="primary")],
+                    [InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin", style="danger")]
                 ])
             )
         return
@@ -4504,7 +4504,7 @@ async def handle_user_text_input(update: Update, context: ContextTypes.DEFAULT_T
             await update.message.reply_text(
                 f"❌ User `{text.strip()}` not found in database. Make sure the user has started the bot.",
                 parse_mode=ParseMode.MARKDOWN,
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🚫 Blocked Buyers", callback_data="admin_blocked_buyers")]])
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🚫 Blocked Buyers", callback_data="admin_blocked_buyers", style="danger")]])
             )
             return
 
@@ -4521,9 +4521,9 @@ async def handle_user_text_input(update: Update, context: ContextTypes.DEFAULT_T
             "🔒 *Status:* When this user deposits, balance will be added normally. BUT when they attempt to purchase any product, the order will be stopped and they will be instructed to contact Admin support.",
             parse_mode=ParseMode.MARKDOWN,
             reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("⚙️ Manage User", callback_data=f"admin_usr_{target_uid}")],
-                [InlineKeyboardButton("🚫 Blocked Buyers List", callback_data="admin_blocked_buyers")],
-                [InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin")]
+                [InlineKeyboardButton("⚙️ Manage User", callback_data=f"admin_usr_{target_uid}", style="primary")],
+                [InlineKeyboardButton("🚫 Blocked Buyers List", callback_data="admin_blocked_buyers", style="danger")],
+                [InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin", style="danger")]
             ])
         )
         return
@@ -4536,7 +4536,7 @@ async def handle_user_text_input(update: Update, context: ContextTypes.DEFAULT_T
             await update.message.reply_text(
                 f"❌ User `{text.strip()}` not found in database. Make sure the user has sent `/start` to the bot at least once.",
                 parse_mode=ParseMode.MARKDOWN,
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("👨‍💼 Manage Assistants", callback_data="admin_manage_assistants")]])
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("👨‍💼 Manage Assistants", callback_data="admin_manage_assistants", style="primary")]])
             )
             return
 
@@ -4557,8 +4557,8 @@ async def handle_user_text_input(update: Update, context: ContextTypes.DEFAULT_T
             "🔒 *Role & Permissions:* This user can **ONLY** create products (`/addproduct`) and load stock (`/addstock`). They have no access to finances or other admin settings.",
             parse_mode=ParseMode.MARKDOWN,
             reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("👨‍💼 Manage Assistants", callback_data="admin_manage_assistants")],
-                [InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin")]
+                [InlineKeyboardButton("👨‍💼 Manage Assistants", callback_data="admin_manage_assistants", style="primary")],
+                [InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin", style="danger")]
             ])
         )
         return
@@ -4571,7 +4571,7 @@ async def handle_user_text_input(update: Update, context: ContextTypes.DEFAULT_T
             await update.message.reply_text(
                 f"❌ User `{text.strip()}` not found in database.",
                 parse_mode=ParseMode.MARKDOWN,
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("👨‍💼 Manage Assistants", callback_data="admin_manage_assistants")]])
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("👨‍💼 Manage Assistants", callback_data="admin_manage_assistants", style="primary")]])
             )
             return
 
@@ -4585,8 +4585,8 @@ async def handle_user_text_input(update: Update, context: ContextTypes.DEFAULT_T
             f"✅ *Assistant Permissions Revoked for {u_label}* (`{target_uid}`).\n\nThis user is now a regular customer.",
             parse_mode=ParseMode.MARKDOWN,
             reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("👨‍💼 Manage Assistants", callback_data="admin_manage_assistants")],
-                [InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin")]
+                [InlineKeyboardButton("👨‍💼 Manage Assistants", callback_data="admin_manage_assistants", style="primary")],
+                [InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin", style="danger")]
             ])
         )
         return
@@ -4596,7 +4596,7 @@ async def handle_user_text_input(update: Update, context: ContextTypes.DEFAULT_T
         context.user_data["waiting_for_single_prod_name"] = False
         prod_name = text.strip()
         if not prod_name or len(prod_name) < 2:
-            await update.message.reply_text("❌ Product name is too short. Please send a valid name:", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="admin_custom_prods")]]))
+            await update.message.reply_text("❌ Product name is too short. Please send a valid name:", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="admin_custom_prods", style="danger")]]))
             context.user_data["waiting_for_single_prod_name"] = True
             return
 
@@ -4607,7 +4607,7 @@ async def handle_user_text_input(update: Update, context: ContextTypes.DEFAULT_T
             f"📦 *Product Name:* `{prod_name}`\n\n"
             "Send the price in USD (e.g. `2.50` or `1.99`):",
             parse_mode=ParseMode.MARKDOWN,
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="admin_custom_prods")]])
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="admin_custom_prods", style="danger")]])
         )
         return
 
@@ -4620,7 +4620,7 @@ async def handle_user_text_input(update: Update, context: ContextTypes.DEFAULT_T
             if price_val < 0.01:
                 raise ValueError()
         except ValueError:
-            await update.message.reply_text("❌ Invalid price. Please enter a valid dollar amount (e.g. `2.50`):", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="admin_custom_prods")]]))
+            await update.message.reply_text("❌ Invalid price. Please enter a valid dollar amount (e.g. `2.50`):", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="admin_custom_prods", style="danger")]]))
             context.user_data["waiting_for_single_prod_price"] = True
             return
 
@@ -4635,7 +4635,7 @@ async def handle_user_text_input(update: Update, context: ContextTypes.DEFAULT_T
             "📋 **Paste your full item content in your next message.**\n\n"
             "💡 _No matter how long it is, how many lines, passwords, instructions, cookies, or URLs it contains — your entire message will be saved as **1 single complete product unit** and delivered automatically to the buyer!_",
             parse_mode=ParseMode.MARKDOWN,
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="admin_custom_prods")]])
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="admin_custom_prods", style="danger")]])
         )
         return
 
@@ -4647,7 +4647,7 @@ async def handle_user_text_input(update: Update, context: ContextTypes.DEFAULT_T
         raw_content = text.strip()
 
         if not raw_content:
-            await update.message.reply_text("❌ Content cannot be empty.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Custom Products", callback_data="admin_custom_prods")]]))
+            await update.message.reply_text("❌ Content cannot be empty.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Custom Products", callback_data="admin_custom_prods", style="danger")]]))
             return
 
         # Create product in DB
@@ -4695,9 +4695,9 @@ async def handle_user_text_input(update: Update, context: ContextTypes.DEFAULT_T
             "⏳ _Notification to users is PAUSED. Add more stock or click Done below to finish and broadcast!_",
             parse_mode=ParseMode.MARKDOWN,
             reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("➕ Add More Stock (Next Item)", callback_data=f"admin_addstock_more_{prod_id}")],
-                [InlineKeyboardButton("✅ Done / Finish & Broadcast Alert", callback_data=f"admin_finish_stock_broadcast_{prod_id}")],
-                [InlineKeyboardButton("📦 Finish Silently (No Broadcast)", callback_data=f"admin_finish_stock_silent_{prod_id}")]
+                [InlineKeyboardButton("➕ Add More Stock (Next Item)", callback_data=f"admin_addstock_more_{prod_id}", style="success")],
+                [InlineKeyboardButton("✅ Done / Finish & Broadcast Alert", callback_data=f"admin_finish_stock_broadcast_{prod_id}", style="success")],
+                [InlineKeyboardButton("📦 Finish Silently (No Broadcast)", callback_data=f"admin_finish_stock_silent_{prod_id}", style="primary")]
             ])
         )
         return
@@ -4768,9 +4768,9 @@ async def handle_user_text_input(update: Update, context: ContextTypes.DEFAULT_T
             "⏳ _Notification to users is PAUSED. Add more stock or click Done below to broadcast to all users!_",
             parse_mode=ParseMode.MARKDOWN,
             reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("➕ Add More Stock (Next Item)", callback_data=f"admin_addstock_more_{c_id}")],
-                [InlineKeyboardButton("✅ Done / Finish & Broadcast Alert", callback_data=f"admin_finish_stock_broadcast_{c_id}")],
-                [InlineKeyboardButton("📦 Finish Silently (No Broadcast)", callback_data=f"admin_finish_stock_silent_{c_id}")]
+                [InlineKeyboardButton("➕ Add More Stock (Next Item)", callback_data=f"admin_addstock_more_{c_id}", style="success")],
+                [InlineKeyboardButton("✅ Done / Finish & Broadcast Alert", callback_data=f"admin_finish_stock_broadcast_{c_id}", style="success")],
+                [InlineKeyboardButton("📦 Finish Silently (No Broadcast)", callback_data=f"admin_finish_stock_silent_{c_id}", style="primary")]
             ])
         )
         return
@@ -4783,7 +4783,7 @@ async def handle_user_text_input(update: Update, context: ContextTypes.DEFAULT_T
             await update.message.reply_text(
                 "❌ Format: `<Product Name> | <Price>`\n\nExample: `Gemini Direct Login | 2.50`",
                 parse_mode=ParseMode.MARKDOWN,
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Custom Products", callback_data="admin_custom_prods")]])
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Custom Products", callback_data="admin_custom_prods", style="danger")]])
             )
             return
 
@@ -4793,17 +4793,17 @@ async def handle_user_text_input(update: Update, context: ContextTypes.DEFAULT_T
         except ValueError:
             await update.message.reply_text(
                 "❌ Invalid price format. Please enter a valid dollar amount (e.g. `2.50`).",
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Custom Products", callback_data="admin_custom_prods")]])
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Custom Products", callback_data="admin_custom_prods", style="danger")]])
             )
             return
 
         prod_id = await database.add_custom_product(name=name, price=price, created_by=user.id)
         back_markup = [
-            [InlineKeyboardButton("➕ Add Stock Now", callback_data=f"admin_addstock_{prod_id}")],
-            [InlineKeyboardButton("📦 Custom Products", callback_data="admin_custom_prods")]
+            [InlineKeyboardButton("➕ Add Stock Now", callback_data=f"admin_addstock_{prod_id}", style="success")],
+            [InlineKeyboardButton("📦 Custom Products", callback_data="admin_custom_prods", style="primary")]
         ]
         if is_super_admin(user.id):
-            back_markup.append([InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin")])
+            back_markup.append([InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin", style="danger")])
 
         # If created by Assistant, alert Super Admin
         if is_assistant(user.id):
@@ -4849,7 +4849,7 @@ async def handle_user_text_input(update: Update, context: ContextTypes.DEFAULT_T
 
         stock_lines = parse_raw_stock_input(text)
         if not stock_lines:
-            await update.message.reply_text("❌ No valid stock items found in your message.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Custom Products", callback_data="admin_custom_prods")]]))
+            await update.message.reply_text("❌ No valid stock items found in your message.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Custom Products", callback_data="admin_custom_prods", style="danger")]]))
             return
 
         added_count = await database.add_custom_product_stock(c_id, stock_lines, added_by=user.id)
@@ -4894,9 +4894,9 @@ async def handle_user_text_input(update: Update, context: ContextTypes.DEFAULT_T
             "⏳ _Notification to users is PAUSED. Add more stock or click Done below to finish and broadcast!_",
             parse_mode=ParseMode.MARKDOWN,
             reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("➕ Add More Stock", callback_data=f"admin_addstock_{c_id}")],
-                [InlineKeyboardButton("✅ Done / Finish & Broadcast Alert", callback_data=f"admin_finish_stock_broadcast_{c_id}")],
-                [InlineKeyboardButton("📦 Finish Silently (No Broadcast)", callback_data=f"admin_finish_stock_silent_{c_id}")]
+                [InlineKeyboardButton("➕ Add More Stock", callback_data=f"admin_addstock_{c_id}", style="success")],
+                [InlineKeyboardButton("✅ Done / Finish & Broadcast Alert", callback_data=f"admin_finish_stock_broadcast_{c_id}", style="success")],
+                [InlineKeyboardButton("📦 Finish Silently (No Broadcast)", callback_data=f"admin_finish_stock_silent_{c_id}", style="primary")]
             ])
         )
         return
@@ -4926,7 +4926,7 @@ async def addproduct_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
     await update.message.reply_text(
         f"✅ *In-House Product Created!*\n\n🆔 *Product ID:* `#{prod_id}`\n📦 *Name:* {name}\n💵 *Price:* `${price:.2f}` USD",
         parse_mode=ParseMode.MARKDOWN,
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("➕ Add Stock", callback_data=f"admin_addstock_{prod_id}")]])
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("➕ Add Stock", callback_data=f"admin_addstock_{prod_id}", style="success")]])
     )
 
 async def customproducts_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -4971,7 +4971,7 @@ async def addstock_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "`user2@gmail.com:pass5678`\n\n"
         "⚡ _As soon as stock is added, all bot users & notification group will be alerted!_",
         parse_mode=ParseMode.MARKDOWN,
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="admin_custom_prods")]])
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="admin_custom_prods", style="danger")]])
     )
 
 async def addassistant_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -5002,7 +5002,7 @@ async def addassistant_command(update: Update, context: ContextTypes.DEFAULT_TYP
         f"🆔 *User ID:* `{target_uid}`\n"
         "🔒 *Role:* Product & Stock Manager (Can ONLY create products and load stock).",
         parse_mode=ParseMode.MARKDOWN,
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("👨‍💼 View Assistants", callback_data="admin_manage_assistants")]])
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("👨‍💼 View Assistants", callback_data="admin_manage_assistants", style="primary")]])
     )
 
 async def removeassistant_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -5062,8 +5062,8 @@ async def blockbuying_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         "🔒 User cannot buy any items now. Order will pause and direct user to Admin support.",
         parse_mode=ParseMode.MARKDOWN,
         reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("⚙️ Manage Profile", callback_data=f"admin_usr_{target_uid}")],
-            [InlineKeyboardButton("🚫 Blocked Buyers List", callback_data="admin_blocked_buyers")]
+            [InlineKeyboardButton("⚙️ Manage Profile", callback_data=f"admin_usr_{target_uid}", style="primary")],
+            [InlineKeyboardButton("🚫 Blocked Buyers List", callback_data="admin_blocked_buyers", style="danger")]
         ])
     )
 
@@ -5090,7 +5090,7 @@ async def unblockbuying_command(update: Update, context: ContextTypes.DEFAULT_TY
     await update.message.reply_text(
         f"🟢 *Buying Restored for User {u_label}* (`{target_uid}`)\n\nUser can now purchase products normally.",
         parse_mode=ParseMode.MARKDOWN,
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🚫 Blocked Buyers List", callback_data="admin_blocked_buyers")]])
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🚫 Blocked Buyers List", callback_data="admin_blocked_buyers", style="danger")]])
     )
 
 async def blockedusers_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -5121,7 +5121,7 @@ async def toggleproduct_command(update: Update, context: ContextTypes.DEFAULT_TY
     await update.message.reply_text(
         f"✅ Product **{res['name']}** (ID `#{p_id}`) status updated:\n\n{st_str}",
         parse_mode=ParseMode.MARKDOWN,
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔘 View All Products", callback_data="admin_manage_api_prods")]])
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔘 View All Products", callback_data="admin_manage_api_prods", style="primary")]])
     )
 
 async def setbinancekey_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -5203,7 +5203,7 @@ async def setmargin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "• Set for specific product: `/setmargin <product_id> <margin_amount>` (e.g. `/setmargin 9 0.60`)\n"
             "• Set global default margin: `/setmargin default <amount>` (e.g. `/setmargin default 0.25`)",
             parse_mode=ParseMode.MARKDOWN,
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("💎 Open Pricing UI", callback_data="admin_margins")]])
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("💎 Open Pricing UI", callback_data="admin_margins", style="primary")]])
         )
         return
 
@@ -5240,8 +5240,8 @@ async def setmargin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         msg,
         parse_mode=ParseMode.MARKDOWN,
         reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("💎 Product Pricing UI", callback_data="admin_margins")],
-            [InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin")]
+            [InlineKeyboardButton("💎 Product Pricing UI", callback_data="admin_margins", style="primary")],
+            [InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin", style="danger")]
         ])
     )
 
@@ -5276,7 +5276,7 @@ async def addbalance_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
         f"💵 *Amount Added:* `+${amt:.2f}` USD\n"
         f"💳 *New Balance:* `${new_bal:.2f}` USD",
         parse_mode=ParseMode.MARKDOWN,
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin")]])
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin", style="danger")]])
     )
 
 async def send_broadcast_background(bot, admin_id: int, message_text: str, reply_markup=None, send_to_group: bool = True, group_markup=None):
@@ -5358,21 +5358,21 @@ async def handle_admin_pricedrop_list(query_or_update, context: ContextTypes.DEF
         p_name = p.get("name", f"Product {p_id}")
         price = float(p.get("sell_price", 0.0))
         btn_text = f"🏷️ {p_name[:26]} (${price:.2f})"
-        buttons.append([InlineKeyboardButton(btn_text, callback_data=f"admin_pricedrop_sel_{p_id}")])
+        buttons.append([InlineKeyboardButton(btn_text, callback_data=f"admin_pricedrop_sel_{p_id}", style="primary")])
 
     # Pagination buttons
     nav_row = []
     if current_page > 1:
-        nav_row.append(InlineKeyboardButton("⬅️ Prev", callback_data=f"admin_pricedrop_page_{current_page - 1}"))
+        nav_row.append(InlineKeyboardButton("⬅️ Prev", callback_data=f"admin_pricedrop_page_{current_page - 1}", style="primary"))
     if total_pages > 1:
-        nav_row.append(InlineKeyboardButton(f"📄 {current_page}/{total_pages}", callback_data=f"admin_pricedrop_page_{current_page}"))
+        nav_row.append(InlineKeyboardButton(f"📄 {current_page}/{total_pages}", callback_data=f"admin_pricedrop_page_{current_page}", style="primary"))
     if current_page < total_pages:
-        nav_row.append(InlineKeyboardButton("Next ➡️", callback_data=f"admin_pricedrop_page_{current_page + 1}"))
+        nav_row.append(InlineKeyboardButton("Next ➡️", callback_data=f"admin_pricedrop_page_{current_page + 1}", style="primary"))
     if nav_row:
         buttons.append(nav_row)
 
-    buttons.append([InlineKeyboardButton("✏️ Custom Product Announcement", callback_data="admin_pricedrop_custom")])
-    buttons.append([InlineKeyboardButton("🔙 Admin Panel", callback_data="nav_admin")])
+    buttons.append([InlineKeyboardButton("✏️ Custom Product Announcement", callback_data="admin_pricedrop_custom", style="success")])
+    buttons.append([InlineKeyboardButton("🔙 Admin Panel", callback_data="nav_admin", style="danger")])
 
     markup = InlineKeyboardMarkup(buttons)
     if hasattr(query_or_update, "edit_message_text"):
@@ -5405,8 +5405,8 @@ async def handle_admin_pricedrop_select_product(query, context: ContextTypes.DEF
     )
 
     buttons = [
-        [InlineKeyboardButton("🔙 Back to Products", callback_data="admin_pricedrop_start")],
-        [InlineKeyboardButton("❌ Cancel", callback_data="nav_admin")]
+        [InlineKeyboardButton("🔙 Back to Products", callback_data="admin_pricedrop_start", style="danger")],
+        [InlineKeyboardButton("❌ Cancel", callback_data="nav_admin", style="danger")]
     ]
     await query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(buttons))
 
@@ -5445,10 +5445,10 @@ async def create_and_preview_pricedrop(update_or_query, context: ContextTypes.DE
     )
 
     buttons = [
-        [InlineKeyboardButton("🚀 Confirm & Send Broadcast", callback_data="admin_pricedrop_confirm")],
+        [InlineKeyboardButton("🚀 Confirm & Send Broadcast", callback_data="admin_pricedrop_confirm", style="success")],
         [
-            InlineKeyboardButton("✏️ Edit / Select Other", callback_data="admin_pricedrop_start"),
-            InlineKeyboardButton("❌ Cancel", callback_data="nav_admin")
+            InlineKeyboardButton("✏️ Edit / Select Other", callback_data="admin_pricedrop_start", style="success"),
+            InlineKeyboardButton("❌ Cancel", callback_data="nav_admin", style="danger")
         ]
     ]
 
@@ -5476,17 +5476,17 @@ async def handle_admin_pricedrop_send(query, context: ContextTypes.DEFAULT_TYPE)
     # User button (direct callback in private chat)
     if prod_id:
         user_kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("🛒 Buy Now / Go to Shop 🚀", callback_data=f"prod_{prod_id}")]
+            [InlineKeyboardButton("🛒 Buy Now / Go to Shop 🚀", callback_data=f"prod_{prod_id}", style="success")]
         ])
         group_kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("🛒 Buy Now / Go to Shop 🚀", url=f"https://t.me/{bot_user}?start=prod_{prod_id}")]
+            [InlineKeyboardButton("🛒 Buy Now / Go to Shop 🚀", url=f"https://t.me/{bot_user}?start=prod_{prod_id}", style="success")]
         ])
     else:
         user_kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("🛒 Open Shop / Buy Now 🚀", callback_data="nav_products")]
+            [InlineKeyboardButton("🛒 Open Shop / Buy Now 🚀", callback_data="nav_products", style="success")]
         ])
         group_kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("🛒 Open Shop / Buy Now 🚀", url=f"https://t.me/{bot_user}?start=shop")]
+            [InlineKeyboardButton("🛒 Open Shop / Buy Now 🚀", url=f"https://t.me/{bot_user}?start=shop", style="success")]
         ])
 
     admin_id = query.from_user.id
@@ -5504,7 +5504,7 @@ async def handle_admin_pricedrop_send(query, context: ContextTypes.DEFAULT_TYPE)
         f"🔘 Attached button: `🛒 Buy Now / Go to Shop 🚀`\n\n"
         "⚡ The bot continues operating normally. You will receive a summary when completed.",
         parse_mode=ParseMode.MARKDOWN,
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin")]])
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin", style="danger")]])
     )
 
 async def pricedrop_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -5525,7 +5525,7 @@ async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(
             "📢 *Broadcast Announcement*\n\nSend the message you want to broadcast to all registered bot users:",
             parse_mode=ParseMode.MARKDOWN,
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="nav_admin")]])
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="nav_admin", style="danger")]])
         )
         return
 
@@ -5556,7 +5556,7 @@ async def deposits_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         text,
         parse_mode=ParseMode.MARKDOWN,
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("📋 Deposits UI", callback_data="admin_deposits"), InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin")]])
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("📋 Deposits UI", callback_data="admin_deposits", style="primary"), InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin", style="danger")]])
     )
 
 async def setwallet_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -5572,7 +5572,7 @@ async def setwallet_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "`/setwallet TRC20 <address>`\n"
             "`/setwallet ERC20 <address>`",
             parse_mode=ParseMode.MARKDOWN,
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("📍 Open Wallets UI", callback_data="admin_wallets")]])
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("📍 Open Wallets UI", callback_data="admin_wallets", style="primary")]])
         )
         return
 
@@ -5593,7 +5593,7 @@ async def setwallet_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"✅ *{label} Wallet Updated!*\n\n"
         f"📍 *Address:*\n`{new_wallet}`",
         parse_mode=ParseMode.MARKDOWN,
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("📍 Wallets Menu", callback_data="admin_wallets"), InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin")]])
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("📍 Wallets Menu", callback_data="admin_wallets", style="primary"), InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin", style="danger")]])
     )
 
 async def wallet_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -5615,7 +5615,7 @@ async def wallet_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         text,
         parse_mode=ParseMode.MARKDOWN,
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("📍 Edit Wallets", callback_data="admin_wallets"), InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin")]])
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("📍 Edit Wallets", callback_data="admin_wallets", style="primary"), InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin", style="danger")]])
     )
 
 async def deductbalance_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -5793,7 +5793,7 @@ async def setgroup_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"📍 Target Group ID: `{new_grp_id}`\n"
         f"📊 Status: {grp_status}",
         parse_mode=ParseMode.MARKDOWN,
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin")]])
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin", style="danger")]])
     )
 
 async def toggleshop_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -5809,7 +5809,7 @@ async def toggleshop_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
     await update.message.reply_text(
         f"✅ *Store Visibility Updated!*\n\n{mode_text}",
         parse_mode=ParseMode.MARKDOWN,
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin")]])
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin", style="danger")]])
     )
 
 async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -5830,8 +5830,8 @@ async def api_key_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "👉 _You have not generated an API key yet. Tap below to generate one:_"
         )
         buttons = [
-            [InlineKeyboardButton("✨ Generate API Key", callback_data="nav_api_rotate")],
-            [InlineKeyboardButton("📖 Read API Docs", callback_data="nav_api_docs")]
+            [InlineKeyboardButton("✨ Generate API Key", callback_data="nav_api_rotate", style="primary")],
+            [InlineKeyboardButton("📖 Read API Docs", callback_data="nav_api_docs", style="primary")]
         ]
     else:
         api_key = key_info.get("api_key", "")
@@ -5847,10 +5847,10 @@ async def api_key_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         buttons = [
             [
-                InlineKeyboardButton("🔄 Rotate Key", callback_data="nav_api_rotate"),
-                InlineKeyboardButton(toggle_label, callback_data="nav_api_toggle")
+                InlineKeyboardButton("🔄 Rotate Key", callback_data="nav_api_rotate", style="primary"),
+                InlineKeyboardButton(toggle_label, callback_data="nav_api_toggle", style="primary")
             ],
-            [InlineKeyboardButton("📖 Read API Docs", callback_data="nav_api_docs")]
+            [InlineKeyboardButton("📖 Read API Docs", callback_data="nav_api_docs", style="primary")]
         ]
     await update.message.reply_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(buttons))
 
@@ -5881,8 +5881,8 @@ async def apidocs_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "⚡ _Instant machine-to-machine key delivery returned in JSON response!_"
     )
     buttons = [
-        [InlineKeyboardButton("🌐 Open Web Documentation", url=docs_url)],
-        [InlineKeyboardButton("🔑 Manage API Key", callback_data="nav_user_api_key")]
+        [InlineKeyboardButton("🌐 Open Web Documentation", url=docs_url, style="primary")],
+        [InlineKeyboardButton("🔑 Manage API Key", callback_data="nav_user_api_key", style="primary")]
     ]
     await update.message.reply_text(
         text,
