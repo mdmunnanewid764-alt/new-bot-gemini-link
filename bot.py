@@ -821,6 +821,25 @@ async def handle_buy_checkout(update: Update, context: ContextTypes.DEFAULT_TYPE
         raw_uname = f"@{user.username}" if user.username else "N/A"
         raw_fname = user.first_name if user.first_name else "Buyer"
         
+        # Determine Product Source (Supplier API vs In-House / Assistant)
+        if prod_id >= 90000:
+            custom_id = prod_id - 90000
+            cust_prod = await database.get_custom_product(custom_id)
+            if cust_prod:
+                c_by = cust_prod.get("created_by")
+                if c_by and int(c_by) != ADMIN_ID:
+                    c_user = cust_prod.get("creator_username")
+                    c_fn = cust_prod.get("creator_first_name") or "Assistant"
+                    clean_fn = c_fn.replace("*", "").replace("_", "\\_").replace("`", "")
+                    clean_un = f"(@{c_user})" if c_user else ""
+                    source_line = f"📦 *Source:* In-House Stock\n👨‍💼 *Added By (Assistant):* `{clean_fn}` {clean_un} (ID: `{c_by}`)"
+                else:
+                    source_line = "📦 *Source:* In-House Stock (Added By: 👑 Super Admin)"
+            else:
+                source_line = "📦 *Source:* In-House Stock"
+        else:
+            source_line = "🌐 *Source:* Supplier API (Auto Synced)"
+
         # Format keys for admin copy
         admin_keys_text = ""
         if delivered_keys:
@@ -839,6 +858,7 @@ async def handle_buy_checkout(update: Update, context: ContextTypes.DEFAULT_TYPE
             f"🆔 *User ID:* `{user.id}`\n"
             f"🏷️ *Order ID:* `{order_id}`\n"
             f"📦 *Product:* `{prod_name}`\n"
+            f"{source_line}\n"
             f"🔢 *Qty:* `{qty}` | 💰 *Total:* `${total_price:.2f}` USD\n"
             f"💳 *Buyer Remaining Balance:* `${new_balance:.2f}` USD"
             f"{admin_keys_text}"

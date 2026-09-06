@@ -322,12 +322,32 @@ async def handle_create_order(request: web.Request) -> web.Response:
                 else:
                     admin_keys_text = "\n\n⚠️ _No keys were delivered._"
 
+                # Determine Product Source
+                if is_custom:
+                    custom_id = product_id - 90000
+                    cust_prod = await database.get_custom_product(custom_id)
+                    if cust_prod:
+                        c_by = cust_prod.get("created_by")
+                        if c_by and int(c_by) != admin_id:
+                            c_user = cust_prod.get("creator_username")
+                            c_fn = cust_prod.get("creator_first_name") or "Assistant"
+                            clean_fn = c_fn.replace("*", "").replace("_", "\\_").replace("`", "")
+                            clean_un = f"(@{c_user})" if c_user else ""
+                            source_line = f"📦 *Source:* In-House Stock\n👨‍💼 *Added By (Assistant):* `{clean_fn}` {clean_un} (ID: `{c_by}`)"
+                        else:
+                            source_line = "📦 *Source:* In-House Stock (Added By: 👑 Super Admin)"
+                    else:
+                        source_line = "📦 *Source:* In-House Stock"
+                else:
+                    source_line = "🌐 *Source:* Supplier API (Auto Synced)"
+
                 notif_msg = (
                     f"⚡ *New API Order Processed (Admin Copy)*\n\n"
                     f"👤 *API User:* `{api_user.get('first_name')}` (`@{api_user.get('username') or 'N/A'}`)\n"
                     f"🆔 *User ID:* `{user_id}`\n"
                     f"🏷️ *Order Code:* `{order_code}`\n"
                     f"📦 *Product:* `{p['name']}`\n"
+                    f"{source_line}\n"
                     f"🔢 *Qty:* `{quantity}` | 💰 *Total:* `${total_price:.2f}` USD\n"
                     f"💳 *User Remaining Balance:* `${new_bal:.2f}` USD"
                     f"{admin_keys_text}"
