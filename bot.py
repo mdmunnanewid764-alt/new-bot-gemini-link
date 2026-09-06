@@ -328,24 +328,24 @@ async def show_force_join_screen(update_or_query, context: ContextTypes.DEFAULT_
 def main_menu_keyboard(user_id: int, lang: str = "en") -> InlineKeyboardMarkup:
     buttons = [
         [
-            InlineKeyboardButton(t("btn_shop", lang), callback_data="nav_products"),
+            InlineKeyboardButton(t("btn_shop", lang), callback_data="nav_products", style="success"),
         ],
         [
-            InlineKeyboardButton(t("btn_topup", lang), callback_data="nav_deposit"),
-            InlineKeyboardButton(t("btn_orders", lang), callback_data="nav_orders")
+            InlineKeyboardButton(t("btn_topup", lang), callback_data="nav_deposit", style="primary"),
+            InlineKeyboardButton(t("btn_orders", lang), callback_data="nav_orders", style="primary")
         ],
         [
-            InlineKeyboardButton(t("btn_support", lang), callback_data="nav_help"),
-            InlineKeyboardButton(t("btn_profile", lang), callback_data="nav_account")
+            InlineKeyboardButton(t("btn_support", lang), callback_data="nav_help", style="success"),
+            InlineKeyboardButton(t("btn_profile", lang), callback_data="nav_account", style="success")
         ],
         [
-            InlineKeyboardButton(t("btn_language", lang), callback_data="nav_language")
+            InlineKeyboardButton("🔗 Reseller API", callback_data="nav_user_api_key", style="primary")
+        ],
+        [
+            InlineKeyboardButton(t("btn_language", lang), callback_data="nav_language", style="success"),
+            InlineKeyboardButton(t("btn_admin", lang), callback_data="nav_admin", style="danger") if is_super_admin(user_id) else (InlineKeyboardButton(t("btn_assistant", lang), callback_data="admin_custom_prods", style="danger") if is_assistant(user_id) else InlineKeyboardButton("🎁 Free Gift", callback_data="nav_help", style="danger"))
         ]
     ]
-    if is_super_admin(user_id):
-        buttons.append([InlineKeyboardButton(t("btn_admin", lang), callback_data="nav_admin")])
-    elif is_assistant(user_id):
-        buttons.append([InlineKeyboardButton(t("btn_assistant", lang), callback_data="admin_custom_prods")])
     return InlineKeyboardMarkup(buttons)
 
 async def show_language_menu(query_or_update, context: ContextTypes.DEFAULT_TYPE):
@@ -356,18 +356,18 @@ async def show_language_menu(query_or_update, context: ContextTypes.DEFAULT_TYPE
 
     buttons = [
         [
-            InlineKeyboardButton(f"{'✅ ' if current_lang == 'en' else ''}🇬🇧 English (Default)", callback_data="set_lang_en"),
-            InlineKeyboardButton(f"{'✅ ' if current_lang == 'fa' else ''}🇮🇷 فارسی (Iran)", callback_data="set_lang_fa"),
+            InlineKeyboardButton(f"{'✅ ' if current_lang == 'en' else ''}🇬🇧 English", callback_data="set_lang_en", style="success" if current_lang == "en" else "primary"),
+            InlineKeyboardButton(f"{'✅ ' if current_lang == 'fa' else ''}🇮🇷 فارسی", callback_data="set_lang_fa", style="success" if current_lang == "fa" else "primary"),
         ],
         [
-            InlineKeyboardButton(f"{'✅ ' if current_lang == 'ar' else ''}🇵🇸 العربية (Palestine)", callback_data="set_lang_ar"),
-            InlineKeyboardButton(f"{'✅ ' if current_lang == 'ur' else ''}🇵🇰 اردو (Pakistan)", callback_data="set_lang_ur"),
+            InlineKeyboardButton(f"{'✅ ' if current_lang == 'ar' else ''}🇵🇸 العربية", callback_data="set_lang_ar", style="success" if current_lang == "ar" else "primary"),
+            InlineKeyboardButton(f"{'✅ ' if current_lang == 'ur' else ''}🇵🇰 اردو", callback_data="set_lang_ur", style="success" if current_lang == "ur" else "primary"),
         ],
         [
-            InlineKeyboardButton(f"{'✅ ' if current_lang == 'bn' else ''}🇧🇩 বাংলা (Bangladesh)", callback_data="set_lang_bn"),
+            InlineKeyboardButton(f"{'✅ ' if current_lang == 'bn' else ''}🇧🇩 বাংলা", callback_data="set_lang_bn", style="success" if current_lang == "bn" else "primary"),
         ],
         [
-            InlineKeyboardButton(t("btn_back_main", current_lang), callback_data="nav_main")
+            InlineKeyboardButton(t("btn_back_main", current_lang), callback_data="nav_main", style="danger")
         ]
     ]
 
@@ -462,8 +462,10 @@ async def start_command(update_or_query, context: ContextTypes.DEFAULT_TYPE):
 
     lang = await database.get_user_language(user.id)
     balance = await database.get_user_balance(user.id)
+    raw_fname = (user.first_name or "User").replace("*", "").replace("_", "").replace("`", "")
+    raw_uname = (user.username or "N/A").replace("*", "").replace("_", "\\_").replace("`", "")
 
-    welcome_text = t("welcome", lang, name=(user.first_name or "there"), balance=balance)
+    welcome_text = t("welcome", lang, name=raw_fname, username=raw_uname, user_id=user.id, balance=balance)
 
     if hasattr(update_or_query, "edit_message_text"):
         await safe_edit_message_text(update_or_query, welcome_text, parse_mode=ParseMode.MARKDOWN, reply_markup=main_menu_keyboard(user.id, lang))
@@ -639,8 +641,8 @@ async def show_products_list(query, context: ContextTypes.DEFAULT_TYPE, page: in
         buttons.append(nav_row)
 
     buttons.append([
-        InlineKeyboardButton(t("btn_refresh", lang), callback_data=f"nav_products_page_{current_page}"),
-        InlineKeyboardButton(t("btn_back_main", lang), callback_data="nav_main")
+        InlineKeyboardButton(t("btn_refresh", lang), callback_data=f"nav_products_page_{current_page}", style="primary"),
+        InlineKeyboardButton(t("btn_back_main", lang), callback_data="nav_main", style="danger")
     ])
     
     if hasattr(query, "edit_message_text"):
@@ -659,7 +661,7 @@ async def handle_product_detail(update: Update, context: ContextTypes.DEFAULT_TY
     try:
         p = await catalog_sync.get_local_product(prod_id)
         if not p:
-            await query.edit_message_text("⚠️ Product not found or out of stock.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="nav_products")]]))
+            await query.edit_message_text("⚠️ Product not found or out of stock.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="nav_products", style="danger")]]))
             return
 
         name = p.get("name", "Digital Product")
@@ -678,17 +680,17 @@ async def handle_product_detail(update: Update, context: ContextTypes.DEFAULT_TY
         )
 
         buttons = [
-            [InlineKeyboardButton("🛒 Buy Now", callback_data=f"qty_{prod_id}_1")],
+            [InlineKeyboardButton("🛒 Buy Now", callback_data=f"qty_{prod_id}_1", style="success")],
             [
-                InlineKeyboardButton("🔙 Back to Catalog", callback_data="nav_products"),
-                InlineKeyboardButton("🏠 Main Menu", callback_data="nav_main")
+                InlineKeyboardButton("🔙 Back to Catalog", callback_data="nav_products", style="danger"),
+                InlineKeyboardButton("🏠 Main Menu", callback_data="nav_main", style="primary")
             ]
         ]
         await query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(buttons))
 
     except Exception as e:
         logger.error(f"Error product detail: {e}")
-        await query.edit_message_text("❌ Error loading product details.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="nav_products")]]))
+        await query.edit_message_text("❌ Error loading product details.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="nav_products", style="danger")]]))
 
 async def handle_quantity_selector(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -707,7 +709,7 @@ async def handle_quantity_selector(update: Update, context: ContextTypes.DEFAULT
     try:
         p = await catalog_sync.get_local_product(prod_id)
         if not p:
-            await query.edit_message_text("⚠️ Product not found.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="nav_products")]]))
+            await query.edit_message_text("⚠️ Product not found.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="nav_products", style="danger")]]))
             return
 
         name = p.get("name", "Product")
@@ -733,17 +735,17 @@ async def handle_quantity_selector(update: Update, context: ContextTypes.DEFAULT
 
         buttons = [
             [
-                InlineKeyboardButton("➖ 1", callback_data=f"qty_{prod_id}_{max(1, qty-1)}"),
-                InlineKeyboardButton(f"Qty: {qty}", callback_data="noop"),
-                InlineKeyboardButton("➕ 1", callback_data=f"qty_{prod_id}_{min(20, qty+1)}")
+                InlineKeyboardButton("➖ 1", callback_data=f"qty_{prod_id}_{max(1, qty-1)}", style="primary"),
+                InlineKeyboardButton(f"Qty: {qty}", callback_data="noop", style="success"),
+                InlineKeyboardButton("➕ 1", callback_data=f"qty_{prod_id}_{min(20, qty+1)}", style="primary")
             ],
             [
-                InlineKeyboardButton("5x", callback_data=f"qty_{prod_id}_5"),
-                InlineKeyboardButton("10x", callback_data=f"qty_{prod_id}_10"),
-                InlineKeyboardButton("20x", callback_data=f"qty_{prod_id}_20")
+                InlineKeyboardButton("5x", callback_data=f"qty_{prod_id}_5", style="primary"),
+                InlineKeyboardButton("10x", callback_data=f"qty_{prod_id}_10", style="primary"),
+                InlineKeyboardButton("20x", callback_data=f"qty_{prod_id}_20", style="primary")
             ],
-            [InlineKeyboardButton(f"✅ Confirm & Pay (${total_price:.2f})", callback_data=f"buy_{prod_id}_{qty}")],
-            [InlineKeyboardButton("❌ Cancel", callback_data=f"prod_{prod_id}")]
+            [InlineKeyboardButton(f"✅ Confirm & Pay (${total_price:.2f})", callback_data=f"buy_{prod_id}_{qty}", style="success")],
+            [InlineKeyboardButton("❌ Cancel", callback_data=f"prod_{prod_id}", style="danger")]
         ]
 
         await query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(buttons))
@@ -3541,16 +3543,16 @@ async def show_deposit_menu(query_or_update, context: ContextTypes.DEFAULT_TYPE)
 
     buttons = [
         [
-            InlineKeyboardButton("$5", callback_data="dep_amt_5"),
-            InlineKeyboardButton("$10", callback_data="dep_amt_10"),
-            InlineKeyboardButton("$25", callback_data="dep_amt_25"),
-            InlineKeyboardButton("$50", callback_data="dep_amt_50"),
+            InlineKeyboardButton("$5", callback_data="dep_amt_5", style="primary"),
+            InlineKeyboardButton("$10", callback_data="dep_amt_10", style="primary"),
+            InlineKeyboardButton("$25", callback_data="dep_amt_25", style="primary"),
+            InlineKeyboardButton("$50", callback_data="dep_amt_50", style="primary"),
         ],
         [
-            InlineKeyboardButton("$100", callback_data="dep_amt_100"),
-            InlineKeyboardButton("✏️ Custom Amount", callback_data="dep_amt_custom"),
+            InlineKeyboardButton("$100", callback_data="dep_amt_100", style="primary"),
+            InlineKeyboardButton("✏️ Custom Amount", callback_data="dep_amt_custom", style="success"),
         ],
-        [InlineKeyboardButton(t("btn_back_main", lang), callback_data="nav_main")],
+        [InlineKeyboardButton(t("btn_back_main", lang), callback_data="nav_main", style="danger")],
     ]
 
     if hasattr(query_or_update, "edit_message_text"):
