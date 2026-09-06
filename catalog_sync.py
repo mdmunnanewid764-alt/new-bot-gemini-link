@@ -350,8 +350,8 @@ async def get_local_catalog(filter_gemini: Optional[bool] = None) -> List[Dict[s
     now_ts = time.time()
     cache_key = f"gemini_{filter_gemini}"
 
-    # Return memory cache if fresh (< 3 seconds)
-    if _CATALOG_CACHE.get(cache_key) and (now_ts - _CATALOG_CACHE_TS) < 3.0:
+    # Return memory cache if fresh (< 120 seconds)
+    if _CATALOG_CACHE.get(cache_key) and (now_ts - _CATALOG_CACHE_TS) < 120.0:
         return _CATALOG_CACHE[cache_key]
 
     margins = await database.get_all_margins()

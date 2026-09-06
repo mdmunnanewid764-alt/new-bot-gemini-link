@@ -5992,7 +5992,7 @@ def main():
     async def instant_callback_ack(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if update.callback_query:
             try:
-                asyncio.create_task(update.callback_query.answer())
+                await update.callback_query.answer()
             except Exception:
                 pass
 
