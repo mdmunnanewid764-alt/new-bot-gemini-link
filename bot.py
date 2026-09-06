@@ -42,6 +42,7 @@ load_dotenv()
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "8934646392:AAGNMWA0AftNgJ56SXBuxzzVOk0qHkOkgVg")
 ADMIN_ID = int(os.getenv("ADMIN_ID", "6575066703"))
 NOTIFICATION_GROUP_ID = int(os.getenv("NOTIFICATION_GROUP_ID", "-1003721268860"))
+ASSISTANT_GROUP_ID = int(os.getenv("ASSISTANT_GROUP_ID", "-5341310029"))
 
 # Logging setup
 logging.basicConfig(
@@ -230,6 +231,49 @@ async def broadcast_group_deposit(bot, user_name: str, username: str, user_id: i
         await bot.send_message(chat_id=grp_id, text=msg, parse_mode=ParseMode.MARKDOWN, reply_markup=btn)
     except Exception as e:
         logger.warning(f"Could not send deposit notification to group: {e}")
+
+async def get_assistant_group_id() -> int:
+    stored = await database.get_setting("assistant_group_id")
+    if stored:
+        try:
+            return int(stored)
+        except ValueError:
+            pass
+    return ASSISTANT_GROUP_ID
+
+async def broadcast_assistant_group_sale(bot, assistant_name: str, assistant_username: Optional[str], assistant_id: Union[int, str], prod_name: str, qty: int, total_price: float, order_id: str):
+    """Send inspiring and celebratory sale notification to the Assistant Group (-5341310029) when an Assistant product sells."""
+    try:
+        grp_id = await get_assistant_group_id()
+        clean_prod = str(prod_name).replace("*", "").replace("_", "\\_").replace("`", "")
+        clean_ast = (assistant_name or "Assistant").replace("*", "").replace("_", "\\_").replace("`", "")
+        ast_user_str = f"(@{assistant_username})" if assistant_username else ""
+        date_str = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
+
+        msg = (
+            "🎉🔥 *CONGRATULATIONS TEAM! NEW SALE!* 🔥🎉\n\n"
+            "🌟 *An in-house product added by an Assistant was just sold!*\n\n"
+            f"👨‍💼 *Added By (Assistant):* *{clean_ast}* {ast_user_str}\n"
+            f"🆔 *Assistant ID:* `{assistant_id}`\n\n"
+            f"📦 *Product:* `{clean_prod}`\n"
+            f"🔢 *Quantity Sold:* `{qty}` item(s)\n"
+            f"💰 *Sale Revenue:* **${total_price:.2f} USD**\n"
+            f"🧾 *Order ID:* `#{order_id}`\n"
+            f"📅 *Time:* `{date_str}`\n\n"
+            "🚀 _Keep adding high-demand products & restocking! High stock = More sales & maximum earnings!_ 💪✨"
+        )
+
+        try:
+            await bot.send_message(chat_id=grp_id, text=msg, parse_mode=ParseMode.MARKDOWN)
+        except Exception as send_err:
+            err_str = str(send_err).lower()
+            if "chat not found" in err_str and not str(grp_id).startswith("-100"):
+                alt_grp_id = int(f"-100{abs(grp_id)}")
+                await bot.send_message(chat_id=alt_grp_id, text=msg, parse_mode=ParseMode.MARKDOWN)
+            else:
+                logger.warning(f"Could not send assistant sale notification to group {grp_id}: {send_err}")
+    except Exception as e:
+        logger.warning(f"Failed in broadcast_assistant_group_sale: {e}")
 
 # --- KEYBOARDS & UI HELPERS ---
 
@@ -910,12 +954,27 @@ async def handle_buy_checkout(update: Update, context: ContextTypes.DEFAULT_TYPE
             cust_prod = await database.get_custom_product(custom_id)
             if cust_prod:
                 c_by = cust_prod.get("created_by")
+                c_user = cust_prod.get("creator_username")
+                c_fn = cust_prod.get("creator_first_name") or "Assistant"
+                clean_fn = c_fn.replace("*", "").replace("_", "\\_").replace("`", "")
+                clean_un = f"(@{c_user})" if c_user else ""
+                
                 if c_by and int(c_by) != ADMIN_ID:
-                    c_user = cust_prod.get("creator_username")
-                    c_fn = cust_prod.get("creator_first_name") or "Assistant"
-                    clean_fn = c_fn.replace("*", "").replace("_", "\\_").replace("`", "")
-                    clean_un = f"(@{c_user})" if c_user else ""
                     source_line = f"📦 *Source:* In-House Stock\n👨‍💼 *Added By (Assistant):* `{clean_fn}` {clean_un} (ID: `{c_by}`)"
+                    # Broadcast motivating sale alert to Assistant Group (-5341310029)
+                    try:
+                        await broadcast_assistant_group_sale(
+                            bot=context.bot,
+                            assistant_name=c_fn,
+                            assistant_username=c_user,
+                            assistant_id=c_by,
+                            prod_name=prod_name,
+                            qty=qty,
+                            total_price=total_price,
+                            order_id=str(order_id)
+                        )
+                    except Exception as ast_err:
+                        logger.warning(f"Could not broadcast assistant sale: {ast_err}")
                 else:
                     source_line = "📦 *Source:* In-House Stock (Added By: 👑 Super Admin)"
             else:

@@ -324,16 +324,32 @@ async def handle_create_order(request: web.Request) -> web.Response:
 
                 # Determine Product Source
                 if is_custom:
-                    custom_id = product_id - 90000
+                    custom_id = product_id - 90000 if product_id >= 90000 else product_id
                     cust_prod = await database.get_custom_product(custom_id)
                     if cust_prod:
                         c_by = cust_prod.get("created_by")
+                        c_user = cust_prod.get("creator_username")
+                        c_fn = cust_prod.get("creator_first_name") or "Assistant"
+                        clean_fn = c_fn.replace("*", "").replace("_", "\\_").replace("`", "")
+                        clean_un = f"(@{c_user})" if c_user else ""
+                        
                         if c_by and int(c_by) != admin_id:
-                            c_user = cust_prod.get("creator_username")
-                            c_fn = cust_prod.get("creator_first_name") or "Assistant"
-                            clean_fn = c_fn.replace("*", "").replace("_", "\\_").replace("`", "")
-                            clean_un = f"(@{c_user})" if c_user else ""
                             source_line = f"📦 *Source:* In-House Stock\n👨‍💼 *Added By (Assistant):* `{clean_fn}` {clean_un} (ID: `{c_by}`)"
+                            # Broadcast to Assistant Group
+                            try:
+                                import asyncio
+                                asyncio.create_task(bot_module.broadcast_assistant_group_sale(
+                                    bot=_tg_bot,
+                                    assistant_name=c_fn,
+                                    assistant_username=c_user,
+                                    assistant_id=c_by,
+                                    prod_name=p["name"],
+                                    qty=quantity,
+                                    total_price=total_price,
+                                    order_id=str(order_code)
+                                ))
+                            except Exception as ast_err:
+                                logger.warning(f"Could not broadcast assistant sale via API: {ast_err}")
                         else:
                             source_line = "📦 *Source:* In-House Stock (Added By: 👑 Super Admin)"
                     else:
