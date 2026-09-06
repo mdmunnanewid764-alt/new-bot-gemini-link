@@ -15,6 +15,17 @@ class ShopAPIError(Exception):
         self.status_code = status_code
         self.data = data or {}
 
+_shared_client: Optional[httpx.AsyncClient] = None
+
+def get_shared_http_client() -> httpx.AsyncClient:
+    global _shared_client
+    if _shared_client is None or _shared_client.is_closed:
+        _shared_client = httpx.AsyncClient(
+            timeout=15.0,
+            limits=httpx.Limits(max_keepalive_connections=30, max_connections=100, keepalive_expiry=60.0)
+        )
+    return _shared_client
+
 class ShopAPIClient:
     def __init__(self, base_url: Optional[str] = None):
         self._custom_base_url = base_url
@@ -79,26 +90,26 @@ class ShopAPIClient:
     async def health(self) -> Dict[str, Any]:
         """Public health check."""
         base_url = await self.get_base_url()
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            res = await client.get(f"{base_url}/health")
-            return await self._handle_response(res)
+        client = get_shared_http_client()
+        res = await client.get(f"{base_url}/health")
+        return await self._handle_response(res)
 
     async def get_me(self) -> Dict[str, Any]:
         """Account + wallet balance info."""
         base_url = await self.get_base_url()
         headers = await self._get_headers(requires_auth=True)
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            res = await client.get(f"{base_url}/me", headers=headers)
-            return await self._handle_response(res)
+        client = get_shared_http_client()
+        res = await client.get(f"{base_url}/me", headers=headers)
+        return await self._handle_response(res)
 
     async def get_categories(self) -> List[Dict[str, Any]]:
         """Lists visible shop categories."""
         base_url = await self.get_base_url()
         headers = await self._get_headers(requires_auth=True)
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            res = await client.get(f"{base_url}/categories", headers=headers)
-            data = await self._handle_response(res)
-            return data.get("categories", []) if isinstance(data.get("categories"), list) else []
+        client = get_shared_http_client()
+        res = await client.get(f"{base_url}/categories", headers=headers)
+        data = await self._handle_response(res)
+        return data.get("categories", []) if isinstance(data.get("categories"), list) else []
 
     async def get_products(self, category_id: Optional[int] = None) -> List[Dict[str, Any]]:
         """Lists buyable products. Optional category filter."""
@@ -107,19 +118,19 @@ class ShopAPIClient:
         url = f"{base_url}/products"
         if category_id:
             url += f"?category_id={category_id}"
-        async with httpx.AsyncClient(timeout=12.0) as client:
-            res = await client.get(url, headers=headers)
-            data = await self._handle_response(res)
-            return data.get("products", []) if isinstance(data.get("products"), list) else []
+        client = get_shared_http_client()
+        res = await client.get(url, headers=headers)
+        data = await self._handle_response(res)
+        return data.get("products", []) if isinstance(data.get("products"), list) else []
 
     async def get_product(self, product_id: int) -> Dict[str, Any]:
         """Get one product with category and pricing info."""
         base_url = await self.get_base_url()
         headers = await self._get_headers(requires_auth=True)
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            res = await client.get(f"{base_url}/products/{product_id}", headers=headers)
-            data = await self._handle_response(res)
-            return data.get("product", data)
+        client = get_shared_http_client()
+        res = await client.get(f"{base_url}/products/{product_id}", headers=headers)
+        data = await self._handle_response(res)
+        return data.get("product", data)
 
     async def create_order(
         self,
@@ -140,24 +151,24 @@ class ShopAPIClient:
         if customer_name:
             payload["customer_name"] = customer_name
 
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            res = await client.post(f"{base_url}/orders", headers=headers, json=payload)
-            return await self._handle_response(res)
+        client = get_shared_http_client()
+        res = await client.post(f"{base_url}/orders", headers=headers, json=payload)
+        return await self._handle_response(res)
 
     async def get_order(self, order_code: str) -> Dict[str, Any]:
         """Get one order owned by this API key, including delivery payloads."""
         base_url = await self.get_base_url()
         headers = await self._get_headers(requires_auth=True)
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            res = await client.get(f"{base_url}/orders/{order_code}", headers=headers)
-            data = await self._handle_response(res)
-            return data.get("order", data)
+        client = get_shared_http_client()
+        res = await client.get(f"{base_url}/orders/{order_code}", headers=headers)
+        data = await self._handle_response(res)
+        return data.get("order", data)
 
     async def get_orders(self, limit: int = 20) -> List[Dict[str, Any]]:
         """List recent orders."""
         base_url = await self.get_base_url()
         headers = await self._get_headers(requires_auth=True)
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            res = await client.get(f"{base_url}/orders?limit={limit}", headers=headers)
-            data = await self._handle_response(res)
-            return data.get("orders", []) if isinstance(data.get("orders"), list) else []
+        client = get_shared_http_client()
+        res = await client.get(f"{base_url}/orders?limit={limit}", headers=headers)
+        data = await self._handle_response(res)
+        return data.get("orders", []) if isinstance(data.get("orders"), list) else []
