@@ -624,19 +624,19 @@ async def show_products_list(query, context: ContextTypes.DEFAULT_TYPE, page: in
         price = p.get("sell_price", 0.0)
         stock = p.get("stock_count")
         stock_str = f"{stock} in stock" if stock is not None else "In Stock"
-        button_text = f"{name} - ${price:.2f} ({stock_str})"
-        buttons.append([InlineKeyboardButton(button_text, callback_data=f"prod_{p_id}")])
+        button_text = f"📦 {name} • ${price:.2f} ({stock_str})"
+        buttons.append([InlineKeyboardButton(button_text, callback_data=f"prod_{p_id}", style="primary")])
 
     # Next / Prev Navigation Row if multiple pages
     if total_pages > 1:
         nav_row = []
         if current_page > 1:
-            nav_row.append(InlineKeyboardButton("⬅️ Prev", callback_data=f"nav_products_page_{current_page - 1}"))
+            nav_row.append(InlineKeyboardButton("⬅️ Prev", callback_data=f"nav_products_page_{current_page - 1}", style="primary"))
         
-        nav_row.append(InlineKeyboardButton(f"📄 {current_page}/{total_pages}", callback_data=f"nav_products_page_{current_page}"))
+        nav_row.append(InlineKeyboardButton(f"📄 {current_page}/{total_pages}", callback_data=f"nav_products_page_{current_page}", style="success"))
 
         if current_page < total_pages:
-            nav_row.append(InlineKeyboardButton("Next ➡️", callback_data=f"nav_products_page_{current_page + 1}"))
+            nav_row.append(InlineKeyboardButton("Next ➡️", callback_data=f"nav_products_page_{current_page + 1}", style="primary"))
         
         buttons.append(nav_row)
 
@@ -1031,12 +1031,12 @@ async def show_account_info(query, context: ContextTypes.DEFAULT_TYPE):
 
     buttons = [
         [
-            InlineKeyboardButton(t("btn_deposit_funds", lang), callback_data="nav_deposit"),
-            InlineKeyboardButton(t("btn_order_history", lang), callback_data="nav_orders")
+            InlineKeyboardButton(t("btn_deposit_funds", lang), callback_data="nav_deposit", style="primary"),
+            InlineKeyboardButton(t("btn_order_history", lang), callback_data="nav_orders", style="primary")
         ],
         [
-            InlineKeyboardButton(t("btn_language", lang), callback_data="nav_language"),
-            InlineKeyboardButton(t("btn_back_main", lang), callback_data="nav_main")
+            InlineKeyboardButton(t("btn_language", lang), callback_data="nav_language", style="success"),
+            InlineKeyboardButton(t("btn_back_main", lang), callback_data="nav_main", style="danger")
         ]
     ]
     await query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(buttons))
@@ -1154,8 +1154,8 @@ async def show_orders_history(query, context: ContextTypes.DEFAULT_TYPE, page: i
     if not all_orders:
         text = "📜 *Order History*\n\nYou haven't placed any orders yet."
         buttons = [
-            [InlineKeyboardButton("🛒 Browse Shop", callback_data="nav_products")],
-            [InlineKeyboardButton("🔙 Main Menu", callback_data="nav_main")]
+            [InlineKeyboardButton("🛒 Browse Shop", callback_data="nav_products", style="success")],
+            [InlineKeyboardButton("🔙 Main Menu", callback_data="nav_main", style="danger")]
         ]
         await query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(buttons))
         return
@@ -1193,21 +1193,21 @@ async def show_orders_history(query, context: ContextTypes.DEFAULT_TYPE, page: i
         )
 
         btn_text = f"🔑 View Credentials (Order #{order_id})"
-        buttons.append([InlineKeyboardButton(btn_text, callback_data=f"nav_orderdetail_{pk_id}")])
+        buttons.append([InlineKeyboardButton(btn_text, callback_data=f"nav_orderdetail_{pk_id}", style="primary")])
 
     # Navigation buttons
     if total_pages > 1:
         nav_row = []
         if current_page > 1:
-            nav_row.append(InlineKeyboardButton("⬅️ Prev", callback_data=f"nav_orders_page_{current_page - 1}"))
-        nav_row.append(InlineKeyboardButton(f"📄 {current_page}/{total_pages}", callback_data=f"nav_orders_page_{current_page}"))
+            nav_row.append(InlineKeyboardButton("⬅️ Prev", callback_data=f"nav_orders_page_{current_page - 1}", style="primary"))
+        nav_row.append(InlineKeyboardButton(f"📄 {current_page}/{total_pages}", callback_data=f"nav_orders_page_{current_page}", style="success"))
         if current_page < total_pages:
-            nav_row.append(InlineKeyboardButton("Next ➡️", callback_data=f"nav_orders_page_{current_page + 1}"))
+            nav_row.append(InlineKeyboardButton("Next ➡️", callback_data=f"nav_orders_page_{current_page + 1}", style="primary"))
         buttons.append(nav_row)
 
     buttons.append([
-        InlineKeyboardButton("🔄 Refresh", callback_data=f"nav_orders_page_{current_page}"),
-        InlineKeyboardButton("🔙 Main Menu", callback_data="nav_main")
+        InlineKeyboardButton("🔄 Refresh", callback_data=f"nav_orders_page_{current_page}", style="primary"),
+        InlineKeyboardButton("🔙 Main Menu", callback_data="nav_main", style="danger")
     ])
 
     try:
@@ -1277,8 +1277,8 @@ async def handle_user_order_detail_callback(query, context: ContextTypes.DEFAULT
         text += f"\n\n📋 *Account Details:* `{clean_extra}`"
 
     buttons = [
-        [InlineKeyboardButton("🔙 Back to Orders History", callback_data="nav_orders")],
-        [InlineKeyboardButton("🏠 Main Menu", callback_data="nav_main")]
+        [InlineKeyboardButton("🔙 Back to Orders History", callback_data="nav_orders", style="danger")],
+        [InlineKeyboardButton("🏠 Main Menu", callback_data="nav_main", style="primary")]
     ]
 
     try:
