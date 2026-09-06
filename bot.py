@@ -5920,11 +5920,13 @@ def main():
         builder.base_url(tg_base_url)
 
     async def on_startup(application):
-        logger.info("Bot application started. Warming up cache and launching background services...")
+        logger.info("Bot application started. Initializing DB, warming up cache and launching background services...")
         try:
+            await database.init_db()
             await reload_assistants_cache()
+            await catalog_sync.sync_catalog_now(api_client, bot=application.bot)
         except Exception as e:
-            logger.warning(f"Initial assistants cache warm-up error: {e}")
+            logger.warning(f"Startup initialization error: {e}")
         asyncio.create_task(catalog_sync.start_periodic_catalog_sync(api_client, bot=application.bot, interval_seconds=120))
 
     builder.post_init(on_startup)
@@ -5993,15 +5995,6 @@ def main():
         logger.error(f"Global handler caught exception: {context.error}")
 
     app.add_error_handler(global_error_handler)
-
-    # Initialize DB, Assistants cache & initial sync before polling
-    import asyncio
-    asyncio.run(database.init_db())
-    try:
-        asyncio.run(reload_assistants_cache())
-        asyncio.run(catalog_sync.sync_catalog_now(api_client))
-    except Exception as e:
-        logger.warning(f"Initial setup warning: {e}")
 
     logger.info("Bot successfully configured. Launching polling (with auto-retry & instant concurrency)...")
     app.run_polling(poll_interval=0.0, timeout=10, bootstrap_retries=-1, drop_pending_updates=True, allowed_updates=Update.ALL_TYPES)
