@@ -331,8 +331,6 @@ async def sync_catalog_now(
     return {
         "status": "success",
         "synced_count": tot_synced,
-        "api1_count": len(synced_ids_1),
-        "api2_count": len(synced_ids_2),
         "new_count": len(new_products),
         "restocked_count": len(restocked_products)
     }
