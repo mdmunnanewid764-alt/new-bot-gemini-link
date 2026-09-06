@@ -1,12 +1,10 @@
 import asyncio
 import logging
 import aiosqlite
-import zlib
 from datetime import datetime
 from typing import List, Dict, Any, Optional
 import database
 from shop_api import ShopAPIClient, ShopAPIError
-from devine_api import DevineAPIClient, DevineAPIError
 from telegram.constants import ParseMode
 from telegram import InlineKeyboardMarkup, InlineKeyboardButton
 
@@ -14,11 +12,6 @@ logger = logging.getLogger(__name__)
 
 # Flag to avoid announcing existing stock during the very first boot sync
 _is_first_sync_done: bool = False
-
-def slug_to_id(slug: str) -> int:
-    """Map string slug from Devine Store to a stable unique integer ID in 70001..79900."""
-    clean = str(slug).strip().lower()
-    return 70000 + (zlib.crc32(clean.encode("utf-8")) % 9900) + 1
 
 async def init_catalog_tables():
     """Initialize synced catalog tables in PostgreSQL or SQLite with last_notified_stock tracking and multi-provider support."""
@@ -170,19 +163,32 @@ async def notify_new_products_alert(bot, new_products: List[Dict[str, Any]], res
 
 async def sync_catalog_now(
     api_client: Optional[ShopAPIClient] = None,
-    devine_client: Optional[DevineAPIClient] = None,
     bot = None
 ) -> Dict[str, Any]:
-    """Fetch live products from Supplier API 1 and Devine Store API 2 and update database.
+    """Fetch live products from Supplier API and update database.
     Detects newly added or restocked products and broadcasts EXACTLY ONCE when stock increases.
     """
     global _is_first_sync_done
     if api_client is None:
         api_client = ShopAPIClient()
-    if devine_client is None:
-        devine_client = DevineAPIClient()
 
     await init_catalog_tables()
+
+    # Clean up any leftover Devine API products from previous integrations
+    if database.USE_POSTGRES:
+        try:
+            pool = await database.get_pg_pool()
+            async with pool.acquire() as conn:
+                await conn.execute("DELETE FROM products_synced WHERE api_source = 'devine' OR (supplier_product_id >= 70000 AND supplier_product_id < 90000)")
+        except Exception as e:
+            logger.warning(f"PG cleanup devine products warning: {e}")
+    else:
+        try:
+            async with aiosqlite.connect(database.DB_PATH) as db:
+                await db.execute("DELETE FROM products_synced WHERE api_source = 'devine' OR (supplier_product_id >= 70000 AND supplier_product_id < 90000)")
+                await db.commit()
+        except Exception as e:
+            logger.warning(f"SQLite cleanup devine products warning: {e}")
 
     # Fetch existing products from DB
     existing_products = {}
@@ -190,7 +196,7 @@ async def sync_catalog_now(
         try:
             pool = await database.get_pg_pool()
             async with pool.acquire() as conn:
-                rows = await conn.fetch("SELECT supplier_product_id, name, sell_price, stock_count, in_stock, COALESCE(last_notified_stock, 0) as last_notified_stock, COALESCE(api_source, 'api1') as api_source, supplier_slug FROM products_synced")
+                rows = await conn.fetch("SELECT supplier_product_id, name, sell_price, stock_count, in_stock, COALESCE(last_notified_stock, 0) as last_notified_stock FROM products_synced")
                 for r in rows:
                     existing_products[r["supplier_product_id"]] = dict(r)
         except Exception as e:
@@ -198,7 +204,7 @@ async def sync_catalog_now(
     else:
         async with aiosqlite.connect(database.DB_PATH) as db:
             db.row_factory = aiosqlite.Row
-            async with db.execute("SELECT supplier_product_id, name, sell_price, stock_count, in_stock, COALESCE(last_notified_stock, 0) as last_notified_stock, COALESCE(api_source, 'api1') as api_source, supplier_slug FROM products_synced") as cursor:
+            async with db.execute("SELECT supplier_product_id, name, sell_price, stock_count, in_stock, COALESCE(last_notified_stock, 0) as last_notified_stock FROM products_synced") as cursor:
                 rows = await cursor.fetchall()
                 for r in rows:
                     existing_products[r["supplier_product_id"]] = dict(r)
@@ -209,19 +215,19 @@ async def sync_catalog_now(
     products_to_save = []
 
     # ---------------------------------------------------------
-    # 1. Sync Supplier API 1
+    # Sync Supplier API
     # ---------------------------------------------------------
-    synced_ids_1 = []
+    synced_ids = []
     try:
-        api1_key = await api_client.get_api_key()
-        if api1_key:
-            remote_1 = await api_client.get_products()
-            for p in remote_1:
+        api_key = await api_client.get_api_key()
+        if api_key:
+            remote = await api_client.get_products()
+            for p in remote:
                 p_id = p.get("id") or p.get("product_id")
                 if not p_id:
                     continue
                 p_id = int(p_id)
-                synced_ids_1.append(p_id)
+                synced_ids.append(p_id)
                 name = str(p.get("name", "Product")).strip()
                 price = float(p.get("unit_price") if p.get("unit_price") is not None else (p.get("sell_price") or p.get("list_price") or 0.0))
                 stock = p.get("stock_count")
@@ -255,58 +261,7 @@ async def sync_catalog_now(
                     "description": p.get("description", "")
                 })
     except Exception as e:
-        logger.warning(f"Supplier API 1 sync warning: {e}")
-
-    # ---------------------------------------------------------
-    # 2. Sync Devine Store API 2
-    # ---------------------------------------------------------
-    synced_ids_2 = []
-    try:
-        devine_key = await devine_client.get_api_key()
-        if devine_key:
-            remote_2 = await devine_client.get_products()
-            for p in remote_2:
-                slug = p.get("id") or p.get("uuid")
-                if not slug:
-                    continue
-                p_id = slug_to_id(slug)
-                synced_ids_2.append(p_id)
-                raw_name = str(p.get("name", "Product")).strip()
-                price = float(p.get("price", 0.0))
-                stock = p.get("stock")
-                unlimited = bool(p.get("unlimited_stock"))
-                available = bool(p.get("available", True))
-                in_stock = 1 if (available and (unlimited or (stock is not None and stock > 0))) else 0
-                curr_stock = stock if stock is not None else (99 if unlimited else 0)
-
-                db_prod = existing_products.get(p_id)
-                last_notified = db_prod.get("last_notified_stock", 0) if db_prod else 0
-
-                if _is_first_sync_done and existing_products:
-                    if p_id not in existing_products and in_stock == 1 and curr_stock > 0:
-                        new_products.append({"id": p_id, "name": raw_name, "sell_price": price, "stock_count": stock})
-                        last_notified = curr_stock
-                    elif p_id in existing_products:
-                        if curr_stock > last_notified and in_stock == 1:
-                            added_cnt = curr_stock - last_notified
-                            restocked_products.append({"id": p_id, "name": raw_name, "sell_price": price, "stock_count": stock, "added_count": added_cnt})
-                            last_notified = curr_stock
-                else:
-                    last_notified = max(last_notified, curr_stock)
-
-                products_to_save.append({
-                    "p_id": p_id,
-                    "name": raw_name,
-                    "price": price,
-                    "stock": stock,
-                    "in_stock": in_stock,
-                    "last_notified": last_notified,
-                    "api_source": "devine",
-                    "supplier_slug": str(slug),
-                    "description": p.get("description", "")
-                })
-    except Exception as e:
-        logger.warning(f"Devine Store API 2 sync warning: {e}")
+        logger.warning(f"Supplier API sync warning: {e}")
 
     # ---------------------------------------------------------
     # Save to PostgreSQL / SQLite
@@ -331,12 +286,10 @@ async def sync_catalog_now(
                             description = EXCLUDED.description
                     """, item["p_id"], item["name"], item["price"], item["stock"], item["in_stock"], item["last_notified"], now_str, item["api_source"], item["supplier_slug"], item["description"])
 
-                if synced_ids_1:
-                    await conn.execute("UPDATE products_synced SET in_stock = 0 WHERE api_source = 'api1' AND supplier_product_id != ALL($1)", synced_ids_1)
-                if synced_ids_2:
-                    await conn.execute("UPDATE products_synced SET in_stock = 0 WHERE api_source = 'devine' AND supplier_product_id != ALL($1)", synced_ids_2)
+                if synced_ids:
+                    await conn.execute("UPDATE products_synced SET in_stock = 0 WHERE supplier_product_id != ALL($1)", synced_ids)
                 
-                tot_synced = len(synced_ids_1) + len(synced_ids_2)
+                tot_synced = len(synced_ids)
                 await conn.execute("INSERT INTO sync_history (synced_at, items_count, status) VALUES ($1, $2, 'success')", now_str, tot_synced)
         except Exception as e:
             logger.error(f"PG save synced products error: {e}")
@@ -358,21 +311,18 @@ async def sync_catalog_now(
                         description = excluded.description
                 """, (item["p_id"], item["name"], item["price"], item["stock"], item["in_stock"], item["last_notified"], now_str, item["api_source"], item["supplier_slug"], item["description"]))
 
-            if synced_ids_1:
-                p1 = ",".join("?" * len(synced_ids_1))
-                await db.execute(f"UPDATE products_synced SET in_stock = 0 WHERE api_source = 'api1' AND supplier_product_id NOT IN ({p1})", synced_ids_1)
-            if synced_ids_2:
-                p2 = ",".join("?" * len(synced_ids_2))
-                await db.execute(f"UPDATE products_synced SET in_stock = 0 WHERE api_source = 'devine' AND supplier_product_id NOT IN ({p2})", synced_ids_2)
+            if synced_ids:
+                p1 = ",".join("?" * len(synced_ids))
+                await db.execute(f"UPDATE products_synced SET in_stock = 0 WHERE supplier_product_id NOT IN ({p1})", synced_ids)
 
-            tot_synced = len(synced_ids_1) + len(synced_ids_2)
+            tot_synced = len(synced_ids)
             await db.execute("INSERT INTO sync_history (synced_at, items_count, status) VALUES (?, ?, 'success')", (now_str, tot_synced))
             await db.commit()
 
     invalidate_catalog_cache()
     _is_first_sync_done = True
-    tot_synced = len(synced_ids_1) + len(synced_ids_2)
-    logger.info(f"Catalog Sync Success: {tot_synced} products synchronized (API 1: {len(synced_ids_1)}, Devine API 2: {len(synced_ids_2)}).")
+    tot_synced = len(synced_ids)
+    logger.info(f"Catalog Sync Success: {tot_synced} products synchronized.")
 
     # Trigger announcement ONCE if new products or genuine restocks detected
     if bot and (new_products or restocked_products):
@@ -629,20 +579,17 @@ async def get_local_product(product_id: int) -> Optional[Dict[str, Any]]:
 
 async def start_periodic_catalog_sync(
     api_client: Optional[ShopAPIClient] = None,
-    devine_client: Optional[DevineAPIClient] = None,
     bot = None,
     interval_seconds: int = 120
 ):
-    """Background task to sync product catalog periodically from both suppliers and notify users ONCE when stock is added."""
+    """Background task to sync product catalog periodically from supplier and notify users ONCE when stock is added."""
     if api_client is None:
         api_client = ShopAPIClient()
-    if devine_client is None:
-        devine_client = DevineAPIClient()
 
     logger.info(f"Starting periodic product sync worker (interval: {interval_seconds}s)...")
     while True:
         try:
-            await sync_catalog_now(api_client, devine_client, bot=bot)
+            await sync_catalog_now(api_client, bot=bot)
         except Exception as e:
             logger.error(f"Error in catalog sync loop: {e}")
         await asyncio.sleep(interval_seconds)

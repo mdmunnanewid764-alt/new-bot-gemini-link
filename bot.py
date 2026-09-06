@@ -32,7 +32,6 @@ try:
 except Exception as e:
     api_server = None
 from shop_api import ShopAPIClient, ShopAPIError
-from devine_api import DevineAPIClient, DevineAPIError
 from payment_api import PaymentAPIClient, PaymentAPIError
 from binance_api import BinanceAPIClient
 from translations import t, LANGUAGES
@@ -53,7 +52,6 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 api_client = ShopAPIClient()
-devine_client = DevineAPIClient()
 payment_client = PaymentAPIClient()
 binance_client = BinanceAPIClient()
 
@@ -850,51 +848,8 @@ async def handle_buy_checkout(update: Update, context: ContextTypes.DEFAULT_TYPE
             status=status,
             delivered_keys=delivered_keys
         )
-    elif prod_id >= 70000:
-        # Devine Store Reseller API Product (API 2)
-        deducted = await database.deduct_user_balance(user.id, total_price)
-        if not deducted:
-            await query.edit_message_text("❌ Balance deduction failed.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="nav_products")]]))
-            return
-
-        p_info = await catalog_sync.get_local_product(prod_id)
-        supplier_slug = (p_info.get("supplier_slug") if p_info else None) or str(prod_id)
-        idempotency_key = f"tg-{user.id}-{prod_id}-{int(time.time())}"
-
-        try:
-            order_res = await devine_client.create_order(
-                product_id=supplier_slug,
-                quantity=qty,
-                idempotency_key=idempotency_key
-            )
-
-            delivered_keys = order_res.get("delivered_keys", [])
-            order_id = order_res.get("order_code") or f"ORD-DVN-{int(time.time())}"
-            status = "delivered"
-
-            # Save order in local DB
-            await database.record_order(
-                user_id=user.id,
-                order_id=order_id,
-                product_id=prod_id,
-                product_name=prod_name,
-                quantity=qty,
-                total=total_price,
-                status=status,
-                delivered_keys=delivered_keys
-            )
-        except Exception as e:
-            logger.error(f"Devine Store API order creation failed: {e}")
-            # Refund deducted balance
-            await database.add_user_balance(user.id, total_price)
-            await query.edit_message_text(
-                f"❌ *Order Failed:*\n`{e}`\n\nYour balance has been refunded.",
-                parse_mode=ParseMode.MARKDOWN,
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back to Products", callback_data="nav_products")]])
-            )
-            return
     else:
-        # Synced Supplier API 1 Product
+        # Synced Supplier API Product
         # Deduct user balance
         deducted = await database.deduct_user_balance(user.id, total_price)
         if not deducted:
@@ -1025,11 +980,8 @@ async def handle_buy_checkout(update: Update, context: ContextTypes.DEFAULT_TYPE
                     source_line = "📦 *Source:* In-House Stock (Added By: 👑 Super Admin)"
             else:
                 source_line = "📦 *Source:* In-House Stock"
-        elif prod_id >= 70000:
-            source_line = "🌐 *Source:* Devine Store API 2 (Auto Synced)"
-            admin_prod_name = f"{prod_name} 2"
         else:
-            source_line = "🌐 *Source:* Supplier API 1 (Auto Synced)"
+            source_line = "🌐 *Source:* Supplier API (Auto Synced)"
             admin_prod_name = prod_name
 
         # Format keys for admin copy
@@ -1393,9 +1345,6 @@ async def show_admin_panel(update_or_query, context: ContextTypes.DEFAULT_TYPE):
     stats = await database.get_stats()
     current_key = await api_client.get_api_key()
     key_preview = f"{current_key[:8]}...{current_key[-4:]}" if current_key and len(current_key) > 12 else (current_key or "NOT SET")
-    
-    devine_key = await devine_client.get_api_key()
-    devine_key_preview = f"{devine_key[:8]}...{devine_key[-4:]}" if devine_key and len(devine_key) > 12 else (devine_key or "NOT SET")
 
     b_key, b_sec = await binance_client.get_credentials()
     binance_status = "🟢 Configured" if (b_key and b_sec) else "🔴 Not Configured"
@@ -1416,8 +1365,7 @@ async def show_admin_panel(update_or_query, context: ContextTypes.DEFAULT_TYPE):
         f"💰 *Total Sales:* `${stats['total_sales']:.2f}` USD\n\n"
         f"🏪 *Store Visibility:* `{store_mode_label}`\n"
         f"💵 *Default Profit Margin:* `${default_margin:.2f}` USD\n"
-        f"🔑 *Shop API Key (API 1):* `{key_preview}`\n"
-        f"🔑 *Devine API Key (API 2):* `{devine_key_preview}`\n"
+        f"🔑 *Shop API Key:* `{key_preview}`\n"
         f"🟡 *Binance API:* `{binance_status}`\n"
         f"🟡 *BEP20 Wallet:* `{bep20[:12]}...{bep20[-6:]}`" if len(bep20) > 20 else f"🟡 *BEP20 Wallet:* `{bep20}`\n\n"
         "⚡ _Select an action from the interactive buttons below:_"
@@ -1427,12 +1375,8 @@ async def show_admin_panel(update_or_query, context: ContextTypes.DEFAULT_TYPE):
 
     buttons = [
         [
-            InlineKeyboardButton("💰 Shop API 1 Balance", callback_data="admin_balance"),
-            InlineKeyboardButton("💰 Devine API 2 Balance", callback_data="admin_devine_balance"),
-        ],
-        [
-            InlineKeyboardButton("🔑 Shop API 1 Key", callback_data="admin_key"),
-            InlineKeyboardButton("🔑 Devine API 2 Key", callback_data="admin_devine_key"),
+            InlineKeyboardButton("💰 Shop API Balance", callback_data="admin_balance"),
+            InlineKeyboardButton("🔑 Shop API Key", callback_data="admin_key"),
         ],
         [
             InlineKeyboardButton("🟡 Binance Live Balance", callback_data="admin_binance_balance"),
@@ -1999,8 +1943,7 @@ async def handle_admin_margins_callback(query, context: ContextTypes.DEFAULT_TYP
     if all_prods:
         for p in all_prods:
             p_id = p["id"]
-            raw_name = p["name"]
-            name = f"{raw_name} 2" if p.get("api_source") == "devine" or (70000 <= int(p_id) < 90000) else raw_name
+            name = p["name"]
             base_p = p.get("supplier_price", 0.0)
             margin = p.get("margin", default_margin)
             sell_p = p.get("sell_price", base_p + margin)
@@ -2059,8 +2002,7 @@ async def handle_admin_edit_product_margin_callback(query, context: ContextTypes
     if stock is None:
         stock = "Unlimited"
 
-    raw_pname = p.get('name', 'Digital Product')
-    admin_disp_name = f"{raw_pname} 2" if p.get("api_source") == "devine" or (70000 <= int(prod_id) < 90000) else raw_pname
+    admin_disp_name = p.get('name', 'Digital Product')
 
     text = (
         f"📦 *Product Profit & Pricing Setup*\n\n"
@@ -2155,55 +2097,6 @@ async def handle_admin_key_test_callback(query, context: ContextTypes.DEFAULT_TY
     ]
     await query.edit_message_text(status_text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(buttons))
 
-async def handle_admin_devine_key_callback(query, context: ContextTypes.DEFAULT_TYPE):
-    current_key = await devine_client.get_api_key()
-    key_preview = f"{current_key[:8]}...{current_key[-4:]}" if current_key and len(current_key) > 12 else (current_key or "NOT SET")
-
-    text = (
-        "🔑 *Devine Store (API 2) Key Configuration*\n\n"
-        f"🔐 *Current Key:* `{key_preview}`\n"
-        f"🌐 *Base URL:* `https://api.aisubscriptions.shop`\n\n"
-        "Tap **Change Key** to input a new key (or send `/setkey2 <key>`), or **Test Connection** to verify balance."
-    )
-    buttons = [
-        [
-            InlineKeyboardButton("✏️ Change API 2 Key", callback_data="admin_setkey2"),
-            InlineKeyboardButton("⚡ Test Connection & Balance", callback_data="admin_testkey2"),
-        ],
-        [
-            InlineKeyboardButton("🔙 Admin Panel", callback_data="nav_admin"),
-        ]
-    ]
-    await query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(buttons))
-
-async def handle_admin_devine_key_test_callback(query, context: ContextTypes.DEFAULT_TYPE):
-    await query.answer("Testing Devine Store API 2 Key...")
-    try:
-        bal_res = await devine_client.get_balance()
-        bal = float(bal_res.get("balance", 0.0))
-        reseller = bal_res.get("reseller", "@Admin")
-        currency = bal_res.get("currency", "USD")
-        status_text = (
-            f"✅ *Devine Store API (API 2) Verified!*\n\n"
-            f"👤 *Reseller Account:* `{reseller}`\n"
-            f"💳 *Reseller Balance:* `${bal:.2f}` {currency}\n"
-            f"🟢 *Status:* `Active & Ready`\n"
-            f"🌐 *API Gateway:* `https://api.aisubscriptions.shop`"
-        )
-    except Exception as e:
-        status_text = f"❌ *Devine API Key Test Failed:*\n`{e}`"
-
-    buttons = [
-        [
-            InlineKeyboardButton("🔄 Refresh", callback_data="admin_testkey2"),
-            InlineKeyboardButton("✏️ Change Key", callback_data="admin_setkey2"),
-        ],
-        [
-            InlineKeyboardButton("🔙 Admin Panel", callback_data="nav_admin")
-        ]
-    ]
-    await query.edit_message_text(status_text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(buttons))
-
 async def handle_admin_pin_products_callback(update_or_query, context: ContextTypes.DEFAULT_TYPE):
     query = update_or_query if hasattr(update_or_query, "edit_message_text") else None
     
@@ -2215,9 +2108,7 @@ async def handle_admin_pin_products_callback(update_or_query, context: ContextTy
     for rank, pid in enumerate(pinned_ids, 1):
         for p in products:
             if p["id"] == pid:
-                raw_name = p['name']
-                p_disp = f"{raw_name} 2" if p.get("api_source") == "devine" or (70000 <= int(pid) < 90000) else raw_name
-                pinned_names.append(f"• 📌 *#{rank}:* `{p_disp}` (${p['sell_price']:.2f})")
+                pinned_names.append(f"• 📌 *#{rank}:* `{p['name']}` (${p['sell_price']:.2f})")
                 break
     
     pinned_summary = "\n".join(pinned_names) if pinned_names else "_No products are pinned yet._"
@@ -2235,9 +2126,7 @@ async def handle_admin_pin_products_callback(update_or_query, context: ContextTy
         p_id = p["id"]
         is_pinned = (p_id in pinned_ids)
         rank_badge = f"📌 [Pinned #{pinned_ids.index(p_id)+1}]" if is_pinned else "⭐ Pin to Top"
-        raw_name = p['name']
-        p_disp = f"{raw_name} 2" if p.get("api_source") == "devine" or (70000 <= int(p_id) < 90000) else raw_name
-        btn_label = f"{rank_badge} {p_disp[:22]} (${p['sell_price']:.2f})"
+        btn_label = f"{rank_badge} {p['name'][:22]} (${p['sell_price']:.2f})"
         buttons.append([InlineKeyboardButton(btn_label, callback_data=f"admin_toggle_pin_{p_id}")])
     
     buttons.append([
@@ -2974,17 +2863,6 @@ async def handle_admin_router(update: Update, context: ContextTypes.DEFAULT_TYPE
         )
     elif data == "admin_testkey":
         await handle_admin_key_test_callback(query, context)
-    elif data == "admin_devine_key":
-        await handle_admin_devine_key_callback(query, context)
-    elif data == "admin_setkey2":
-        context.user_data["waiting_for_admin_setkey2"] = True
-        await query.edit_message_text(
-            "🔑 *Set Devine Store (API 2) Key*\n\nSend your Devine Store API Key in your next message (or use `/setkey2 <key>`):",
-            parse_mode=ParseMode.MARKDOWN,
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="admin_devine_key")]])
-        )
-    elif data in ("admin_testkey2", "admin_devine_balance"):
-        await handle_admin_devine_key_test_callback(query, context)
     elif data == "admin_manage_balance":
         await handle_admin_manage_balance_callback(query, context)
     elif data == "admin_list_users":
@@ -3562,44 +3440,6 @@ async def setkey_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin")]])
         )
 
-async def setkey2_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    if not is_admin(user_id):
-        await update.message.reply_text("❌ Unauthorized.")
-        return
-
-    if not context.args:
-        await update.message.reply_text("⚠️ Usage: `/setkey2 <YOUR_DEVINE_API_KEY>`", parse_mode=ParseMode.MARKDOWN)
-        return
-
-    new_key = context.args[0].strip()
-    await database.set_setting("devine_api_key", new_key)
-
-    try:
-        bal_res = await devine_client.get_balance()
-        bal = float(bal_res.get("balance", 0.0))
-        reseller = bal_res.get("reseller", "@Admin")
-        currency = bal_res.get("currency", "USD")
-        
-        # Trigger background sync
-        asyncio.create_task(catalog_sync.sync_catalog_now(api_client, devine_client, bot=context.bot))
-
-        await update.message.reply_text(
-            f"✅ *Devine Store API (API 2) Key Connected!*\n\n"
-            f"👤 *Reseller:* `{reseller}`\n"
-            f"💳 *Reseller Balance:* `${bal:.2f}` {currency}\n"
-            f"🟢 *Status:* `Active & Verified`\n"
-            f"🔄 _Syncing Devine Store catalog in background..._",
-            parse_mode=ParseMode.MARKDOWN,
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin")]])
-        )
-    except Exception as e:
-        await update.message.reply_text(
-            f"⚠️ *Key Saved, but Connection Test Failed:*\n`{e}`\n\nPlease check your key and make sure it has reseller API access.",
-            parse_mode=ParseMode.MARKDOWN,
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin")]])
-        )
-
 async def balance_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if not is_admin(user_id):
@@ -4037,10 +3877,10 @@ async def handle_user_text_input(update: Update, context: ContextTypes.DEFAULT_T
             total_spent = float(me.get("total_spent", 0.0))
             
             # Trigger background sync
-            asyncio.create_task(catalog_sync.sync_catalog_now(api_client, devine_client, bot=context.bot))
+            asyncio.create_task(catalog_sync.sync_catalog_now(api_client, bot=context.bot))
 
             await update.message.reply_text(
-                f"✅ *Shop API 1 Key Updated & Connected!*\n\n"
+                f"✅ *Shop API Key Updated & Connected!*\n\n"
                 f"👤 *Account:* `{fname}` ({raw_uname})\n"
                 f"🆔 *Supplier ID:* `{me.get('telegram_id', 'N/A')}`\n"
                 f"💳 *Wallet Balance:* `${bal:.2f}` USD\n"
@@ -4052,36 +3892,6 @@ async def handle_user_text_input(update: Update, context: ContextTypes.DEFAULT_T
         except Exception as e:
             await update.message.reply_text(
                 f"⚠️ *Key saved, but validation warning:*\n`{e}`",
-                parse_mode=ParseMode.MARKDOWN,
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin")]])
-            )
-        return
-
-    # ── Admin: Set Devine Store API Key (API 2) ──
-    if context.user_data.get("waiting_for_admin_setkey2") and is_admin(user.id):
-        context.user_data["waiting_for_admin_setkey2"] = False
-        await database.set_setting("devine_api_key", text.strip())
-        try:
-            bal_res = await devine_client.get_balance()
-            bal = float(bal_res.get("balance", 0.0))
-            reseller = bal_res.get("reseller", "@Admin")
-            currency = bal_res.get("currency", "USD")
-
-            # Trigger background sync
-            asyncio.create_task(catalog_sync.sync_catalog_now(api_client, devine_client, bot=context.bot))
-
-            await update.message.reply_text(
-                f"✅ *Devine Store API (API 2) Key Connected!*\n\n"
-                f"👤 *Reseller:* `{reseller}`\n"
-                f"💳 *Reseller Balance:* `${bal:.2f}` {currency}\n"
-                f"🟢 *Status:* `Active & Verified`\n"
-                f"🔄 _Syncing Devine Store catalog in background..._",
-                parse_mode=ParseMode.MARKDOWN,
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin")]])
-            )
-        except Exception as e:
-            await update.message.reply_text(
-                f"⚠️ *Key Saved, but Connection Test Failed:*\n`{e}`\n\nPlease check your key.",
                 parse_mode=ParseMode.MARKDOWN,
                 reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin")]])
             )
@@ -6109,7 +5919,7 @@ def main():
             await reload_assistants_cache()
         except Exception as e:
             logger.warning(f"Initial assistants cache warm-up error: {e}")
-        asyncio.create_task(catalog_sync.start_periodic_catalog_sync(api_client, devine_client, bot=application.bot, interval_seconds=120))
+        asyncio.create_task(catalog_sync.start_periodic_catalog_sync(api_client, bot=application.bot, interval_seconds=120))
 
     builder.post_init(on_startup)
     app = builder.build()
@@ -6122,7 +5932,6 @@ def main():
     app.add_handler(CommandHandler("setmargin", setmargin_command))
     app.add_handler(CommandHandler("margins", margins_command))
     app.add_handler(CommandHandler("setkey", setkey_command))
-    app.add_handler(CommandHandler("setkey2", setkey2_command))
     app.add_handler(CommandHandler("setbinancekey", setbinancekey_command))
     app.add_handler(CommandHandler("setbinanceproxy", setbinanceproxy_command))
     app.add_handler(CommandHandler("setgroup", setgroup_command))
@@ -6184,7 +5993,7 @@ def main():
     asyncio.run(database.init_db())
     try:
         asyncio.run(reload_assistants_cache())
-        asyncio.run(catalog_sync.sync_catalog_now(api_client, devine_client))
+        asyncio.run(catalog_sync.sync_catalog_now(api_client))
     except Exception as e:
         logger.warning(f"Initial setup warning: {e}")
 
