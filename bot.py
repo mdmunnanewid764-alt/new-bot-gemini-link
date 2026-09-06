@@ -233,6 +233,48 @@ async def broadcast_group_deposit(bot, user_name: str, username: str, user_id: i
 
 # --- KEYBOARDS & UI HELPERS ---
 
+_USER_GROUP_MEMBER_CACHE: dict[int, tuple[bool, float]] = {}
+
+async def is_user_group_member(bot, user_id: int) -> bool:
+    """Check if user is a verified member of the mandatory notification group (-1003721268860)."""
+    uid = int(user_id)
+    if is_super_admin(uid) or is_assistant(uid):
+        return True
+
+    now_ts = time.time()
+    if uid in _USER_GROUP_MEMBER_CACHE:
+        val, ts = _USER_GROUP_MEMBER_CACHE[uid]
+        if now_ts - ts < 300.0:  # 5 minutes cache
+            return val
+
+    try:
+        grp_id = await get_notification_group_id()
+        member = await bot.get_chat_member(chat_id=grp_id, user_id=uid)
+        status = str(member.status).lower() if hasattr(member, "status") else ""
+        is_member = status in ("creator", "administrator", "member", "restricted")
+        _USER_GROUP_MEMBER_CACHE[uid] = (is_member, now_ts)
+        return is_member
+    except Exception as e:
+        logger.warning(f"Error checking chat member for {uid}: {e}")
+        return False
+
+async def show_force_join_screen(update_or_query, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update_or_query.from_user.id if hasattr(update_or_query, "from_user") else update_or_query.effective_user.id
+    lang = await database.get_user_language(user_id)
+    text = t("force_join_msg", lang)
+    buttons = [
+        [InlineKeyboardButton(t("btn_join_group", lang), url="https://t.me/bdhitlog")],
+        [InlineKeyboardButton(t("btn_verify_join", lang), callback_data="check_group_join")],
+        [InlineKeyboardButton(t("btn_language", lang), callback_data="nav_language")]
+    ]
+    markup = InlineKeyboardMarkup(buttons)
+    if hasattr(update_or_query, "edit_message_text"):
+        await safe_edit_message_text(update_or_query, text, parse_mode=ParseMode.MARKDOWN, reply_markup=markup)
+    elif hasattr(update_or_query, "callback_query") and update_or_query.callback_query:
+        await safe_edit_message_text(update_or_query.callback_query, text, parse_mode=ParseMode.MARKDOWN, reply_markup=markup)
+    elif hasattr(update_or_query, "message") and update_or_query.message:
+        await update_or_query.message.reply_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=markup)
+
 def main_menu_keyboard(user_id: int, lang: str = "en") -> InlineKeyboardMarkup:
     buttons = [
         [
@@ -298,6 +340,10 @@ async def handle_set_language(query, context: ContextTypes.DEFAULT_TYPE, new_lan
 
 async def show_product_detail_direct(update_or_query, context: ContextTypes.DEFAULT_TYPE, prod_id: int):
     user_id = update_or_query.from_user.id if hasattr(update_or_query, "from_user") else update_or_query.effective_user.id
+    if not await is_user_group_member(context.bot, user_id):
+        await show_force_join_screen(update_or_query, context)
+        return
+
     lang = await database.get_user_language(user_id)
     try:
         p = await catalog_sync.get_local_product(prod_id)
@@ -341,6 +387,11 @@ async def show_product_detail_direct(update_or_query, context: ContextTypes.DEFA
 async def start_command(update_or_query, context: ContextTypes.DEFAULT_TYPE):
     user = update_or_query.from_user if hasattr(update_or_query, "from_user") else update_or_query.effective_user
     asyncio.create_task(database.register_user(user.id, user.username, user.first_name))
+
+    # Mandatory Group Membership Check
+    if not await is_user_group_member(context.bot, user.id):
+        await show_force_join_screen(update_or_query, context)
+        return
 
     # Deep-link routing from broadcast buttons or external links
     if hasattr(context, "args") and context.args:
@@ -394,6 +445,43 @@ async def handle_navigation(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     data = query.data
 
+    if data == "check_group_join":
+        _USER_GROUP_MEMBER_CACHE.pop(user.id, None)
+        is_member = await is_user_group_member(context.bot, user.id)
+        lang = await database.get_user_language(user.id)
+        if is_member:
+            try:
+                await query.answer(t("join_verified_toast", lang), show_alert=True)
+            except Exception:
+                pass
+            await start_command(query, context)
+        else:
+            try:
+                await query.answer(t("join_not_verified_alert", lang), show_alert=True)
+            except Exception:
+                pass
+            await show_force_join_screen(query, context)
+        return
+
+    # Language selection and nav_language are always allowed without group lock
+    if data == "nav_language":
+        await show_language_menu(query, context)
+        return
+    elif data.startswith("set_lang_"):
+        new_lang = data.replace("set_lang_", "")
+        await handle_set_language(query, context, new_lang)
+        return
+
+    # For all other navigation, verify group membership
+    if not await is_user_group_member(context.bot, user.id):
+        lang = await database.get_user_language(user.id)
+        try:
+            await query.answer(t("join_not_verified_alert", lang), show_alert=True)
+        except Exception:
+            pass
+        await show_force_join_screen(query, context)
+        return
+
     if data == "nav_main":
         await start_command(update, context)
     elif data == "nav_products" or data.startswith("nav_products_page_"):
@@ -433,11 +521,6 @@ async def handle_navigation(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await handle_user_order_detail_callback(query, context, order_pk)
     elif data == "nav_help":
         await show_help(query, context)
-    elif data == "nav_language":
-        await show_language_menu(query, context)
-    elif data.startswith("set_lang_"):
-        new_lang = data.replace("set_lang_", "")
-        await handle_set_language(query, context, new_lang)
     elif data == "nav_admin":
         if is_super_admin(user.id):
             await show_admin_panel(query, context)
@@ -5824,7 +5907,7 @@ def main():
     app.add_handler(TypeHandler(Update, instant_callback_ack), group=-1)
 
     # Callbacks
-    app.add_handler(CallbackQueryHandler(handle_navigation, pattern=r"^(nav_|user_order_|set_lang_)"))
+    app.add_handler(CallbackQueryHandler(handle_navigation, pattern=r"^(nav_|user_order_|set_lang_|check_group_join)"))
     app.add_handler(CallbackQueryHandler(handle_product_detail, pattern=r"^prod_\d+"))
     app.add_handler(CallbackQueryHandler(handle_quantity_selector, pattern=r"^qty_\d+_\d+"))
     app.add_handler(CallbackQueryHandler(handle_buy_checkout, pattern=r"^buy_\d+_\d+"))
