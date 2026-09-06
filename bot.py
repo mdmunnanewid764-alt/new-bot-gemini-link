@@ -2423,7 +2423,14 @@ async def handle_admin_router(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     # If user is Assistant, restrict them STRICTLY to adding products & stock only
     if is_assistant(user_id) and not is_super_admin(user_id):
-        allowed_prefixes = ("admin_custom_prods", "admin_prompt_add_cust_prod", "admin_add_single_step1", "admin_addstock_", "admin_viewstock_")
+        allowed_prefixes = (
+            "admin_custom_prods",
+            "admin_prompt_add_cust_prod",
+            "admin_add_single_step1",
+            "admin_addstock_",
+            "admin_viewstock_",
+            "admin_finish_stock_"
+        )
         if not any(data.startswith(p) for p in allowed_prefixes) and data != "nav_main":
             await query.answer("❌ Permission Denied: You are only authorized to add products and load stock. Deleting products is restricted to Super Admin.", show_alert=True)
             return
@@ -2789,20 +2796,21 @@ async def handle_admin_router(update: Update, context: ContextTypes.DEFAULT_TYPE
             return
 
         prod_name = prod.get("name") if prod else f"Product #{c_id}"
-        await query.edit_message_text(
-            f"➕ *Add Stock for `{prod_name}`* (ID `#{c_id}`)\n\n"
+        clean_name = prod_name.replace("*", "").replace("_", "\\_").replace("`", "")
+        text = (
+            f"➕ *Add Stock for `{clean_name}`* (ID `#{c_id}`)\n\n"
             "Select how you would like to load stock:\n\n"
             "1️⃣ **Single Item / Large Text**:\n"
             "Your entire message (including all lines, passwords, instructions, cookies) will be saved as **1 single product unit**.\n\n"
             "2️⃣ **Batch / Multi-Line Stock Loader**:\n"
-            "Load multiple accounts separated by lines, numbers (`1.`, `2.`), or dividers (`---`).",
-            parse_mode=ParseMode.MARKDOWN,
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("📝 Add Single Item (Large Text)", callback_data=f"admin_addstock_single_{c_id}")],
-                [InlineKeyboardButton("📑 Batch Add Multiple Accounts", callback_data=f"admin_addstock_batch_{c_id}")],
-                [InlineKeyboardButton("🔙 Back to Products", callback_data="admin_custom_prods")]
-            ])
+            "Load multiple accounts separated by lines, numbers (`1.`, `2.`), or dividers (`---`)."
         )
+        buttons = [
+            [InlineKeyboardButton("📝 Add Single Item (Large Text)", callback_data=f"admin_addstock_single_{c_id}")],
+            [InlineKeyboardButton("📑 Batch Add Multiple Accounts", callback_data=f"admin_addstock_batch_{c_id}")],
+            [InlineKeyboardButton("🔙 Back to Products", callback_data="admin_custom_prods")]
+        ]
+        await safe_edit_message_text(query, text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(buttons))
     elif data.startswith("admin_addstock_single_"):
         c_id = int(data.replace("admin_addstock_single_", ""))
         prod = await database.get_custom_product(c_id)
@@ -2814,15 +2822,15 @@ async def handle_admin_router(update: Update, context: ContextTypes.DEFAULT_TYPE
             return
 
         prod_name = prod.get("name") if prod else f"Product #{c_id}"
+        clean_name = prod_name.replace("*", "").replace("_", "\\_").replace("`", "")
         context.user_data["admin_single_stock_cid"] = c_id
         context.user_data["waiting_for_admin_add_single_stock"] = True
-        await query.edit_message_text(
-            f"📝 *Add Single Item for `{prod_name}`* (ID `#{c_id}`)\n\n"
+        text = (
+            f"📝 *Add Single Item for `{clean_name}`* (ID `#{c_id}`)\n\n"
             "Paste your complete credentials/text in your next message.\n\n"
-            "💡 _Whatever text, links, passwords, or paragraphs you send will be saved as **1 single stock unit** and delivered to the buyer._",
-            parse_mode=ParseMode.MARKDOWN,
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="admin_custom_prods")]])
+            "💡 _Whatever text, links, passwords, or paragraphs you send will be saved as **1 single stock unit** and delivered to the buyer._"
         )
+        await safe_edit_message_text(query, text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="admin_custom_prods")]]))
     elif data.startswith("admin_addstock_batch_") or data.startswith("admin_addstock_"):
         prefix = "admin_addstock_batch_" if data.startswith("admin_addstock_batch_") else "admin_addstock_"
         c_id = int(data.replace(prefix, ""))
@@ -2835,36 +2843,37 @@ async def handle_admin_router(update: Update, context: ContextTypes.DEFAULT_TYPE
             return
 
         prod_name = prod.get("name") if prod else f"Product #{c_id}"
+        clean_name = prod_name.replace("*", "").replace("_", "\\_").replace("`", "")
         context.user_data["admin_addstock_target_cid"] = c_id
         context.user_data["waiting_for_admin_add_cust_stock"] = True
-        await query.edit_message_text(
-            f"📑 *Batch Stock Loader for `{prod_name}`* (ID `#{c_id}`)\n\n"
+        text = (
+            f"📑 *Batch Stock Loader for `{clean_name}`* (ID `#{c_id}`)\n\n"
             "Send your accounts in **any format you want** in your next message:\n\n"
             "📌 *Supported Formats:*\n"
             "1️⃣ Numbered Multi-line (`1. email:pass`, `2. email:pass`)\n"
             "2️⃣ Separator Lines (`---`, `===`, `***`)\n"
             "3️⃣ Blank-Line Separated Blocks\n"
             "4️⃣ Standard single-line accounts (`email:pass`)\n\n"
-            "⚡ _Each block will be parsed and loaded into available stock!_",
-            parse_mode=ParseMode.MARKDOWN,
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="admin_custom_prods")]])
+            "⚡ _Each block will be parsed and loaded into available stock!_"
         )
+        await safe_edit_message_text(query, text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="admin_custom_prods")]]))
     elif data.startswith("admin_addstock_more_"):
         c_id = int(data.replace("admin_addstock_more_", ""))
         prod = await database.get_custom_product(c_id)
         prod_name = prod.get("name") if prod else f"Product #{c_id}"
+        clean_name = prod_name.replace("*", "").replace("_", "\\_").replace("`", "")
         context.user_data["admin_single_stock_cid"] = c_id
         context.user_data["waiting_for_admin_add_single_stock"] = True
-        await query.edit_message_text(
-            f"➕ *Add Next Item for `{prod_name}`* (ID `#{c_id}`)\n\n"
+        text = (
+            f"➕ *Add Next Item for `{clean_name}`* (ID `#{c_id}`)\n\n"
             "Paste the next credentials/text in your next message.\n\n"
-            "💡 _This item will be saved to stock. No user alert will be sent until you tap Done._",
-            parse_mode=ParseMode.MARKDOWN,
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("✅ Done & Broadcast Alert", callback_data=f"admin_finish_stock_broadcast_{c_id}")],
-                [InlineKeyboardButton("📦 Finish Silently (No Alert)", callback_data=f"admin_finish_stock_silent_{c_id}")]
-            ])
+            "💡 _This item will be saved to stock. No user alert will be sent until you tap Done._"
         )
+        buttons = [
+            [InlineKeyboardButton("✅ Done & Broadcast Alert", callback_data=f"admin_finish_stock_broadcast_{c_id}")],
+            [InlineKeyboardButton("📦 Finish Silently (No Alert)", callback_data=f"admin_finish_stock_silent_{c_id}")]
+        ]
+        await safe_edit_message_text(query, text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(buttons))
     elif data.startswith("admin_finish_stock_broadcast_"):
         c_id = int(data.replace("admin_finish_stock_broadcast_", ""))
         session = context.user_data.pop("pending_stock_session", {})
@@ -2901,16 +2910,16 @@ async def handle_admin_router(update: Update, context: ContextTypes.DEFAULT_TYPE
             logger.error(f"Error broadcasting on finish stock: {e}")
 
         tot_units = sum(p.get("added_count", 1) for p in items_to_broadcast)
-        await query.edit_message_text(
+        text = (
             f"🎉 *Stock Session Finished & Broadcasted!*\n\n"
             f"📢 *Broadcast Report:* `{tot_units}` newly added stock units announced to all users & group.\n\n"
-            "Your store catalog is live with the updated stock!",
-            parse_mode=ParseMode.MARKDOWN,
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("📦 Custom Products", callback_data="admin_custom_prods")],
-                [InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin")]
-            ])
+            "Your store catalog is live with the updated stock!"
         )
+        buttons = [
+            [InlineKeyboardButton("📦 Custom Products", callback_data="admin_custom_prods")],
+            [InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin")]
+        ]
+        await safe_edit_message_text(query, text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(buttons))
     elif data.startswith("admin_finish_stock_silent_"):
         c_id = int(data.replace("admin_finish_stock_silent_", ""))
         context.user_data.pop("pending_stock_session", None)
