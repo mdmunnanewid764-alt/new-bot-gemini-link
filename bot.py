@@ -325,7 +325,15 @@ async def show_force_join_screen(update_or_query, context: ContextTypes.DEFAULT_
     elif hasattr(update_or_query, "message") and update_or_query.message:
         await update_or_query.message.reply_text(text, parse_mode=ParseMode.MARKDOWN, reply_markup=markup)
 
+_MAIN_MENU_CACHE: dict[tuple[bool, bool, str], InlineKeyboardMarkup] = {}
+
 def main_menu_keyboard(user_id: int, lang: str = "en") -> InlineKeyboardMarkup:
+    is_admin = is_super_admin(user_id)
+    is_asst = is_assistant(user_id)
+    cache_key = (is_admin, is_asst, lang)
+    if cache_key in _MAIN_MENU_CACHE:
+        return _MAIN_MENU_CACHE[cache_key]
+
     buttons = [
         [
             InlineKeyboardButton(t("btn_shop", lang), callback_data="nav_products", style="success"),
@@ -342,17 +350,20 @@ def main_menu_keyboard(user_id: int, lang: str = "en") -> InlineKeyboardMarkup:
             InlineKeyboardButton(t("btn_language", lang), callback_data="nav_language", style="primary")
         ]
     ]
-    if is_super_admin(user_id):
+    if is_admin:
         buttons.append([InlineKeyboardButton(t("btn_admin", lang), callback_data="nav_admin", style="danger")])
-    elif is_assistant(user_id):
+    elif is_asst:
         buttons.append([InlineKeyboardButton(t("btn_assistant", lang), callback_data="admin_custom_prods", style="success")])
-    return InlineKeyboardMarkup(buttons)
+    
+    markup = InlineKeyboardMarkup(buttons)
+    _MAIN_MENU_CACHE[cache_key] = markup
+    return markup
 
-async def show_language_menu(query_or_update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = query_or_update.from_user.id if hasattr(query_or_update, "from_user") else query_or_update.effective_user.id
-    current_lang = await database.get_user_language(user_id)
+_LANG_MENU_CACHE: dict[str, InlineKeyboardMarkup] = {}
 
-    title = t("lang_select_title", current_lang)
+def get_language_menu_keyboard(current_lang: str) -> InlineKeyboardMarkup:
+    if current_lang in _LANG_MENU_CACHE:
+        return _LANG_MENU_CACHE[current_lang]
 
     buttons = [
         [
@@ -370,8 +381,16 @@ async def show_language_menu(query_or_update, context: ContextTypes.DEFAULT_TYPE
             InlineKeyboardButton(t("btn_back_main", current_lang), callback_data="nav_main", style="danger")
         ]
     ]
-
     markup = InlineKeyboardMarkup(buttons)
+    _LANG_MENU_CACHE[current_lang] = markup
+    return markup
+
+async def show_language_menu(query_or_update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = query_or_update.from_user.id if hasattr(query_or_update, "from_user") else query_or_update.effective_user.id
+    current_lang = await database.get_user_language(user_id)
+
+    title = t("lang_select_title", current_lang)
+    markup = get_language_menu_keyboard(current_lang)
     if hasattr(query_or_update, "edit_message_text"):
         await query_or_update.edit_message_text(title, parse_mode=ParseMode.MARKDOWN, reply_markup=markup)
     elif hasattr(query_or_update, "message") and query_or_update.message:
