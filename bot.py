@@ -339,13 +339,13 @@ def main_menu_keyboard(user_id: int, lang: str = "en") -> InlineKeyboardMarkup:
             InlineKeyboardButton(t("btn_profile", lang), callback_data="nav_account", style="success")
         ],
         [
-            InlineKeyboardButton("🔗 Reseller API", callback_data="nav_user_api_key", style="primary")
-        ],
-        [
-            InlineKeyboardButton(t("btn_language", lang), callback_data="nav_language", style="success"),
-            InlineKeyboardButton(t("btn_admin", lang), callback_data="nav_admin", style="danger") if is_super_admin(user_id) else (InlineKeyboardButton(t("btn_assistant", lang), callback_data="admin_custom_prods", style="danger") if is_assistant(user_id) else InlineKeyboardButton("🎁 Free Gift", callback_data="nav_help", style="danger"))
+            InlineKeyboardButton(t("btn_language", lang), callback_data="nav_language", style="primary")
         ]
     ]
+    if is_super_admin(user_id):
+        buttons.append([InlineKeyboardButton(t("btn_admin", lang), callback_data="nav_admin", style="danger")])
+    elif is_assistant(user_id):
+        buttons.append([InlineKeyboardButton(t("btn_assistant", lang), callback_data="admin_custom_prods", style="success")])
     return InlineKeyboardMarkup(buttons)
 
 async def show_language_menu(query_or_update, context: ContextTypes.DEFAULT_TYPE):
