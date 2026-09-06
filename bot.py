@@ -2934,6 +2934,23 @@ async def handle_admin_router(update: Update, context: ContextTypes.DEFAULT_TYPE
             "💡 _Whatever text, links, passwords, or paragraphs you send will be saved as **1 single stock unit** and delivered to the buyer._"
         )
         await safe_edit_message_text(query, text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="admin_custom_prods")]]))
+    elif data.startswith("admin_addstock_more_"):
+        c_id = int(data.replace("admin_addstock_more_", ""))
+        prod = await database.get_custom_product(c_id)
+        prod_name = prod.get("name") if prod else f"Product #{c_id}"
+        clean_name = prod_name.replace("*", "").replace("_", "\\_").replace("`", "")
+        context.user_data["admin_single_stock_cid"] = c_id
+        context.user_data["waiting_for_admin_add_single_stock"] = True
+        text = (
+            f"➕ *Add Next Item for `{clean_name}`* (ID `#{c_id}`)\n\n"
+            "Paste the next credentials/text in your next message.\n\n"
+            "💡 _This item will be saved to stock. No user alert will be sent until you tap Done._"
+        )
+        buttons = [
+            [InlineKeyboardButton("✅ Done & Broadcast Alert", callback_data=f"admin_finish_stock_broadcast_{c_id}")],
+            [InlineKeyboardButton("📦 Finish Silently (No Alert)", callback_data=f"admin_finish_stock_silent_{c_id}")]
+        ]
+        await safe_edit_message_text(query, text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(buttons))
     elif data.startswith("admin_addstock_batch_") or data.startswith("admin_addstock_"):
         prefix = "admin_addstock_batch_" if data.startswith("admin_addstock_batch_") else "admin_addstock_"
         c_id = int(data.replace(prefix, ""))
@@ -2960,23 +2977,6 @@ async def handle_admin_router(update: Update, context: ContextTypes.DEFAULT_TYPE
             "⚡ _Each block will be parsed and loaded into available stock!_"
         )
         await safe_edit_message_text(query, text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="admin_custom_prods")]]))
-    elif data.startswith("admin_addstock_more_"):
-        c_id = int(data.replace("admin_addstock_more_", ""))
-        prod = await database.get_custom_product(c_id)
-        prod_name = prod.get("name") if prod else f"Product #{c_id}"
-        clean_name = prod_name.replace("*", "").replace("_", "\\_").replace("`", "")
-        context.user_data["admin_single_stock_cid"] = c_id
-        context.user_data["waiting_for_admin_add_single_stock"] = True
-        text = (
-            f"➕ *Add Next Item for `{clean_name}`* (ID `#{c_id}`)\n\n"
-            "Paste the next credentials/text in your next message.\n\n"
-            "💡 _This item will be saved to stock. No user alert will be sent until you tap Done._"
-        )
-        buttons = [
-            [InlineKeyboardButton("✅ Done & Broadcast Alert", callback_data=f"admin_finish_stock_broadcast_{c_id}")],
-            [InlineKeyboardButton("📦 Finish Silently (No Alert)", callback_data=f"admin_finish_stock_silent_{c_id}")]
-        ]
-        await safe_edit_message_text(query, text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(buttons))
     elif data.startswith("admin_finish_stock_broadcast_"):
         c_id = int(data.replace("admin_finish_stock_broadcast_", ""))
         session = context.user_data.pop("pending_stock_session", {})
