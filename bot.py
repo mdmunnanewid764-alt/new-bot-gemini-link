@@ -643,7 +643,9 @@ async def show_products_list(query, context: ContextTypes.DEFAULT_TYPE, page: in
         price = p.get("sell_price", 0.0)
         stock = p.get("stock_count")
         stock_str = f"{stock} in stock" if stock is not None else "In Stock"
-        button_text = f"📦 {name} • ${price:.2f} ({stock_str})"
+        is_pin = p.get("is_pinned", False)
+        pin_icon = "📌 " if is_pin else "📦 "
+        button_text = f"{pin_icon}{name} • ${price:.2f} ({stock_str})"
         buttons.append([InlineKeyboardButton(button_text, callback_data=f"prod_{p_id}", style="primary")])
 
     # Next / Prev Navigation Row if multiple pages
@@ -2132,32 +2134,45 @@ async def handle_admin_pin_products_callback(update_or_query, context: ContextTy
     query = update_or_query if hasattr(update_or_query, "edit_message_text") else None
     
     # Retrieve all available products
+    catalog_sync.invalidate_catalog_cache()
     products = await catalog_sync.get_local_catalog()
     pinned_ids = await database.get_pinned_product_ids()
     
-    pinned_names = []
+    pinned_list = []
+    unpinned_list = []
+    prod_map = {p["id"]: p for p in products}
+
     for rank, pid in enumerate(pinned_ids, 1):
-        for p in products:
-            if p["id"] == pid:
-                pinned_names.append(f"• 📌 *#{rank}:* `{p['name']}` (${p['sell_price']:.2f})")
-                break
+        if pid in prod_map:
+            p = prod_map[pid]
+            pinned_list.append((rank, p))
+            
+    for p in products:
+        if p["id"] not in pinned_ids:
+            unpinned_list.append(p)
     
+    pinned_names = [f"• 📌 *#{rank}:* `{p['name']}` (${p['sell_price']:.2f})" for rank, p in pinned_list]
     pinned_summary = "\n".join(pinned_names) if pinned_names else "_No products are pinned yet._"
     
     text = (
         "📌 *Product Pin Manager (Top Priority Sorting)*\n\n"
         "Pin any product to force it to appear at the **very top (Rank 1, 2, ... on Page 1)** of your store catalog!\n\n"
-        "⭐ *Currently Pinned Products:*\n"
+        "⭐ *Currently Pinned Products (Top Ranks):*\n"
         f"{pinned_summary}\n\n"
-        "👇 *Tap a product below to PIN to top or UNPIN:*"
+        "👇 *Tap a pinned product to UNPIN, or tap an unpinned product to PIN to top:*"
     )
     
     buttons = []
-    for p in products:
+    # 1. Pinned Products at the VERY TOP of the button list (Green / Success style)
+    for rank, p in pinned_list:
         p_id = p["id"]
-        is_pinned = (p_id in pinned_ids)
-        rank_badge = f"📌 [Pinned #{pinned_ids.index(p_id)+1}]" if is_pinned else "⭐ Pin to Top"
-        btn_label = f"{rank_badge} {p['name'][:22]} (${p['sell_price']:.2f})"
+        btn_label = f"📌 [Pinned #{rank}] {p['name'][:22]} (${p['sell_price']:.2f})"
+        buttons.append([InlineKeyboardButton(btn_label, callback_data=f"admin_toggle_pin_{p_id}", style="success")])
+
+    # 2. Unpinned Products below (Blue / Primary style)
+    for p in unpinned_list:
+        p_id = p["id"]
+        btn_label = f"⭐ Pin to Top {p['name'][:22]} (${p['sell_price']:.2f})"
         buttons.append([InlineKeyboardButton(btn_label, callback_data=f"admin_toggle_pin_{p_id}", style="primary")])
     
     buttons.append([
@@ -2793,6 +2808,7 @@ async def handle_admin_router(update: Update, context: ContextTypes.DEFAULT_TYPE
     elif data.startswith("admin_toggle_pin_"):
         p_id = int(data.replace("admin_toggle_pin_", ""))
         now_pinned = await database.toggle_product_pin(p_id)
+        catalog_sync.invalidate_catalog_cache()
         msg = "📌 Product pinned to the TOP of the store!" if now_pinned else "🗑️ Product unpinned from top."
         try:
             await query.answer(msg, show_alert=True)
