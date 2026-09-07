@@ -643,9 +643,7 @@ async def show_products_list(query, context: ContextTypes.DEFAULT_TYPE, page: in
         price = p.get("sell_price", 0.0)
         stock = p.get("stock_count")
         stock_str = f"{stock} in stock" if stock is not None else "In Stock"
-        is_pin = p.get("is_pinned", False)
-        pin_icon = "📌 " if is_pin else "📦 "
-        button_text = f"{pin_icon}{name} • ${price:.2f} ({stock_str})"
+        button_text = f"📦 {name} • ${price:.2f} ({stock_str})"
         buttons.append([InlineKeyboardButton(button_text, callback_data=f"prod_{p_id}", style="primary")])
 
     # Next / Prev Navigation Row if multiple pages
