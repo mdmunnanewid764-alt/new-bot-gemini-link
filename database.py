@@ -1865,6 +1865,25 @@ async def get_custom_product(product_id: int) -> Optional[dict]:
             r = await cursor.fetchone()
             return dict(r) if r else None
 
+async def update_custom_product_price(product_id: int, new_price: float) -> bool:
+    """Update price of a custom in-house product."""
+    invalidate_custom_products_cache()
+    if USE_POSTGRES:
+        try:
+            pool = await get_pg_pool()
+            async with pool.acquire() as conn:
+                await conn.execute("UPDATE custom_products SET price = $1 WHERE id = $2", float(new_price), int(product_id))
+                return True
+        except Exception as e:
+            logger.error(f"PG update_custom_product_price error: {e}")
+            return False
+
+    import aiosqlite
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("UPDATE custom_products SET price = ? WHERE id = ?", (float(new_price), int(product_id)))
+        await db.commit()
+    return True
+
 async def delete_custom_product(product_id: int) -> bool:
     """Delete or deactivate a custom product."""
     if USE_POSTGRES:

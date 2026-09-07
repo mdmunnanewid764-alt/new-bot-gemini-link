@@ -1620,13 +1620,17 @@ async def handle_admin_custom_products_callback(update_or_query, context: Contex
             f"💵 Price: `${price:.2f}` USD | 📊 In Stock: `{stock}` items{creator_tag}\n"
             f"━━━━━━━━━━━━━━━━━━━\n"
         )
-        row_btns = [
+        row1 = [
             InlineKeyboardButton(f"➕ Add Stock (#{c_id})", callback_data=f"admin_addstock_menu_{c_id}", style="success"),
-            InlineKeyboardButton(f"👁️ View Stock", callback_data=f"admin_viewstock_{c_id}", style="primary"),
+            InlineKeyboardButton(f"✏️ Price (${price:.2f})", callback_data=f"admin_editprice_{c_id}", style="primary"),
+        ]
+        row2 = [
+            InlineKeyboardButton(f"👁️ View Stock ({stock})", callback_data=f"admin_viewstock_{c_id}", style="primary"),
         ]
         if is_super_admin(user_id):
-            row_btns.append(InlineKeyboardButton(f"🗑️ Delete", callback_data=f"admin_delcust_{c_id}", style="danger"))
-        buttons.append(row_btns)
+            row2.append(InlineKeyboardButton(f"🗑️ Delete", callback_data=f"admin_delcust_{c_id}", style="danger"))
+        buttons.append(row1)
+        buttons.append(row2)
 
     if not prods:
         text += "_No in-house products found for your account._\n\n"
@@ -3169,6 +3173,33 @@ async def handle_admin_router(update: Update, context: ContextTypes.DEFAULT_TYPE
                 [InlineKeyboardButton("🔙 Custom Products", callback_data="admin_custom_prods", style="danger")]
             ])
         )
+    elif data.startswith("admin_editprice_"):
+        c_id = int(data.replace("admin_editprice_", ""))
+        prod = await database.get_custom_product(c_id)
+        if not prod:
+            await query.answer("❌ Product not found.", show_alert=True)
+            return
+        if not is_super_admin(user_id) and prod.get("created_by") and int(prod["created_by"]) != int(user_id):
+            await query.answer("❌ Permission Denied: You can only edit price for products created by you.", show_alert=True)
+            return
+
+        prod_name = prod.get("name", f"Product #{c_id}")
+        clean_name = prod_name.replace("*", "").replace("_", "\\_").replace("`", "")
+        curr_price = float(prod.get("price", 0.0))
+
+        context.user_data["waiting_for_admin_edit_price_cid"] = True
+        context.user_data["admin_edit_price_cid"] = c_id
+
+        text = (
+            f"✏️ *Edit Selling Price*\n\n"
+            f"📦 *Product:* `{clean_name}` (ID `#{c_id}`)\n"
+            f"💵 *Current Price:* `${curr_price:.2f}` USD\n\n"
+            "Send the **new price in USD** (e.g. `2.50` or `1.99` or `0.85`) in your next message:"
+        )
+        buttons = [
+            [InlineKeyboardButton("❌ Cancel", callback_data="admin_custom_prods", style="danger")]
+        ]
+        await safe_edit_message_text(query, text, parse_mode=ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(buttons))
     elif data.startswith("admin_delcust_"):
         if not is_super_admin(user_id):
             await query.answer("❌ Permission Denied: Only Super Admin can delete products.", show_alert=True)
@@ -4606,6 +4637,52 @@ async def handle_user_text_input(update: Update, context: ContextTypes.DEFAULT_T
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("👨‍💼 Manage Assistants", callback_data="admin_manage_assistants", style="primary")],
                 [InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin", style="danger")]
+            ])
+        )
+        return
+
+    # ── Admin/Assistant: Edit Custom Product Price ──
+    if context.user_data.get("waiting_for_admin_edit_price_cid") and is_product_manager(user.id):
+        context.user_data["waiting_for_admin_edit_price_cid"] = False
+        c_id = context.user_data.pop("admin_edit_price_cid", None)
+        if not c_id:
+            await update.message.reply_text("❌ Session expired. Please select product again.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("📦 Custom Products", callback_data="admin_custom_prods", style="primary")]]))
+            return
+
+        prod = await database.get_custom_product(c_id)
+        if not prod:
+            await update.message.reply_text("❌ Product not found.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("📦 Custom Products", callback_data="admin_custom_prods", style="primary")]]))
+            return
+
+        if not is_super_admin(user.id) and prod.get("created_by") and int(prod["created_by"]) != int(user.id):
+            await update.message.reply_text("❌ Permission Denied: You can only edit price for products created by you.")
+            return
+
+        try:
+            clean_p = text.strip().replace("$", "").replace("USD", "").strip()
+            new_price = float(clean_p)
+            if new_price < 0.01:
+                raise ValueError()
+        except ValueError:
+            context.user_data["waiting_for_admin_edit_price_cid"] = True
+            context.user_data["admin_edit_price_cid"] = c_id
+            await update.message.reply_text("❌ Invalid price format. Please enter a valid number (e.g. `2.50`):", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="admin_custom_prods", style="danger")]]))
+            return
+
+        await database.update_custom_product_price(c_id, new_price)
+        catalog_sync.invalidate_catalog_cache()
+        prod_name = prod.get("name", f"Product #{c_id}")
+        clean_name = prod_name.replace("*", "").replace("_", "\\_").replace("`", "")
+
+        await update.message.reply_text(
+            f"✅ *Product Price Updated Successfully!*\n\n"
+            f"📦 *Product:* `{clean_name}` (ID `#{c_id}`)\n"
+            f"💵 *New Selling Price:* `${new_price:.2f}` USD\n\n"
+            "The new price is now immediately live in the store catalog!",
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("📦 Custom Products", callback_data="admin_custom_prods", style="primary")],
+                [InlineKeyboardButton("⚙️ Admin Panel", callback_data="nav_admin", style="danger") if is_super_admin(user.id) else InlineKeyboardButton("🏠 Main Menu", callback_data="nav_main", style="primary")]
             ])
         )
         return
